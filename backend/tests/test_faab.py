@@ -76,3 +76,13 @@ def test_pace_multiplier_rewards_unspent_budget_late():
     assert faab.pace_multiplier(80, 100, 4, 17) > 1.2   # lots left, season nearly over
     assert faab.pace_multiplier(10, 100, 15, 17) < 1.0  # spent early
     assert faab.pace_multiplier(0, 0, 5, 17) == 1.0
+
+
+def test_suggest_never_bids_money_you_do_not_have():
+    m = faab.market([], budget=100)
+    broke = faab.suggest(0.9, m, remaining=0)
+    assert (broke["low"], broke["mid"], broke["high"]) == (0, 0, 0)
+    # A league minimum you cannot cover is capped at what is left, not raised to the minimum.
+    short = faab.suggest(0.9, m, remaining=2, bid_min=5)
+    assert short["high"] <= 2 and short["low"] <= 2
+    assert faab.suggest(0.9, faab.market([], budget=0), remaining=0)["mid"] == 0

@@ -197,3 +197,36 @@ async def test_a_broken_fantasypros_page_does_not_break_the_page(tmp_path, monke
     got = await svc.waivers("L1", None)
     assert got["fp_errors"] == ["weekly rb: 503 Server Error"]
     assert got["players"], "free agents still list"
+
+
+async def test_recent_news_lifts_a_target_and_rides_along_with_it(service, tmp_path):
+    def handler(request: httpx.Request) -> httpx.Response:
+        query = json.loads(request.content)["query"]
+        data = {alias: ([{"source": "rotowire", "source_key": "77", "player_id": pid, "published": hours_ago(3),
+                          "metadata": {"title": "Waiver Wide - Named the starter in Week 3",
+                                       "description": "He takes over the slot role."}}] if pid == "5" else [])
+                for alias, pid in re.findall(r'(a\d+): get_player_news\(sport: "nfl", player_id: "([^"]+)"', query)}
+        return httpx.Response(200, json={"data": data})
+
+    quiet = await service.waiver_board("L1", None)
+    before = by_id(quiet["targets"], "5")["priority"]["score"]
+
+    service.news = News(Cache(tmp_path / "board-news"))
+    service.news.http = httpx.AsyncClient(transport=httpx.MockTransport(handler))
+    service.s.cache.invalidate()
+    board = await service.waiver_board("L1", None)
+    await service.news.aclose()
+
+    target = by_id(board["targets"], "5")
+    assert target["priority"]["score"] > before
+    assert target["news"][0]["title"].startswith("Waiver Wide")
+    assert any("Named the starter" in w for w in target["priority"]["why"])
+
+
+async def test_a_streamer_the_experts_like_survives_the_shortlist(service, monkeypatch):
+    # Waiver Wide's rest-of-season value is nothing special, but he is ranked on the wire page,
+    # so trimming the board by roster upgrade alone must not lose him.
+    board = await service.waiver_board("L1", None, limit=1)
+    assert len(board["targets"]) == 1
+    full = await service.waiver_board("L1", None)
+    assert "5" in [t["player_id"] for t in full["targets"]]

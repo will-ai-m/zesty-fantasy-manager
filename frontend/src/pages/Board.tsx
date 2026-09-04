@@ -43,11 +43,19 @@ export default function Board() {
     { key: 'fp_week', header: 'ECR', title: 'FantasyPros rank for this week, with tier and the change since last week', render: (t) => <FpRank fp={t.fp} />, sort: (t) => t.fp?.pos_rank_n, align: 'right' },
     { key: 'fp_ros', header: 'ROS ECR', title: 'FantasyPros rest-of-season rank', render: (t) => <FpRank fp={t.fp} kind="ros" />, sort: (t) => t.fp?.ros_pos_rank, align: 'right' },
     {
-      key: 'opportunity', header: 'Why now', title: 'Somebody ahead of him on the depth chart is hurt',
-      render: (t) => t.opportunity
-        ? <span className={t.opportunity.certain ? 'text-emerald-700' : 'text-amber-700'} title={t.opportunity.reason}>{t.opportunity.certain ? '✓' : '~'} {t.opportunity.blockers[0].name} {t.opportunity.blockers[0].injury_status}</span>
-        : <span className="text-stone-300">—</span>,
-      sort: (t) => (t.opportunity ? (t.opportunity.certain ? 2 : 1) : 0), align: 'left', desc: true,
+      key: 'opportunity', header: 'Why now', title: 'Somebody ahead of him on the depth chart is hurt, or there is recent news about him',
+      render: (t) => {
+        if (t.opportunity) {
+          return <span className={t.opportunity.certain ? 'text-emerald-700' : 'text-amber-700'} title={t.opportunity.reason}>
+            {t.opportunity.certain ? '✓' : '~'} {t.opportunity.blockers[0].name} {t.opportunity.blockers[0].injury_status}
+          </span>
+        }
+        const story = t.news_signal ?? t.news?.[0]
+        return story
+          ? <span className="block max-w-[260px] truncate text-stone-600" title={`${story.title}\n\n${story.description ?? ''}`}>{story.title}</span>
+          : <span className="text-stone-300">—</span>
+      },
+      sort: (t) => (t.opportunity ? (t.opportunity.certain ? 3 : 2) : t.news?.length ? 1 : 0), align: 'left', desc: true,
     },
     { key: 'vs_mine', header: 'vs mine', title: 'Rest-of-season projection minus your weakest player at that position (RB/WR/TE compare against your weakest flex-eligible player)', render: (t) => t.vs_mine == null ? <span className="text-stone-300">—</span> : <span className={t.vs_mine > 0 ? 'font-semibold text-emerald-700' : 'text-stone-400'}>{t.vs_mine > 0 ? '+' : ''}{fmt(t.vs_mine, 0)}</span>, sort: (t) => t.vs_mine, align: 'right', desc: true },
     { key: 'proj_week', header: `Wk ${week}`, title: 'Projected points this week under this league’s scoring', render: (t) => fmt(t.proj_week), sort: (t) => t.proj_week, align: 'right', desc: true },

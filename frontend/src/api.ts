@@ -112,6 +112,9 @@ export interface Target extends Player {
   clears_at: number | null
   on_waivers: boolean
   opportunity: Opportunity | null
+  /** Recent stories about him, on the board's leaders only. */
+  news?: NewsHeadline[]
+  news_signal?: NewsHeadline | null
 }
 
 export interface WaiverClock {
@@ -178,7 +181,8 @@ export interface LineupView {
 
 export interface NewsLeagueStatus { league_id: string; league_name: string; status: 'free' | 'mine' | 'owned'; owner: string | null }
 
-export interface NewsItem {
+/** A story as the news provider gives it, before it is matched to your leagues. */
+export interface NewsHeadline {
   key: string
   source: string
   source_key: string
@@ -191,7 +195,11 @@ export interface NewsItem {
   hot: boolean
   category: 'injury' | 'practice' | 'depth' | 'transaction' | 'suspension' | 'return' | 'usage' | 'other'
   severity: number
+  /** −1 bad for him, +1 good for him, 0 neither. */
   direction: number
+}
+
+export interface NewsItem extends NewsHeadline {
   player: Player
   leagues: NewsLeagueStatus[]
   mine: boolean

@@ -115,10 +115,12 @@ def suggest(
 
     mid = share * calibration * pace * budget
     low, high = mid * 0.6, mid * 1.5
-    floor = max(1, bid_min) if budget else 0
+    cap = max(0, int(remaining))
+    # A minimum bid you cannot afford is not a minimum bid.
+    floor = min(max(1, bid_min), cap) if budget else 0
 
     def clamp(x: float) -> int:
-        return max(floor, min(int(remaining), round(x))) if budget else 0
+        return max(floor, min(cap, round(x)))
 
     lo, md, hi = clamp(low), clamp(mid), clamp(high)
     lo, hi = min(lo, md), max(hi, md)

@@ -628,8 +628,14 @@ class Service:
         market = faab.market(history, budget)
         clear_times = self._clear_times(transactions, league, now)
 
-        shortlist = [r for r in free if (r.get("vs_mine") or -99) > -15 or (r.get("adds_24h") or 0) > 0 or (r.get("fp") or {}).get("waiver_rank")]
-        shortlist = shortlist[:max(limit * 3, 120)]
+        # `free` is ordered by upgrade over your roster, which alone would cut a streamer the
+        # experts like but whose rest-of-season value is unremarkable. Take the best of each signal.
+        by_expert = [r for r in free if (r.get("fp") or {}).get("waiver_rank")]
+        by_trend = sorted(free, key=lambda r: -(r.get("adds_24h") or 0))[:40]
+        shortlist_by_id: dict[str, dict] = {}
+        for r in free[:max(limit * 2, 80)] + by_expert + by_trend:
+            shortlist_by_id.setdefault(r["player_id"], r)
+        shortlist = list(shortlist_by_id.values())
         teams = sorted({r["team"] for r in shortlist if r.get("team")})
         depth = await self._depth_charts(teams)
         for r in shortlist:
@@ -648,10 +654,24 @@ class Service:
             r["priority"] = targets.priority(r, baselines)
             r["clears_at"] = clear_times.get(r["player_id"]) or r.get("waiver_until")
             r["on_waivers"] = bool(r["clears_at"]) or r.get("platform_status") == "WAIVERS"
-            if summary["waiver"]["type_code"] == 2:
+        shortlist.sort(key=lambda r: -r["priority"]["score"])
+        head = shortlist[:limit]
+
+        # Recent news can be the whole reason to claim someone, so the leaders get a second look
+        # with their headlines attached. Only the leaders: news costs a request per 25 players.
+        if self.news:
+            recent = await self.news.for_players([r["player_id"] for r in head], limit=3)
+            for r in head:
+                items = [i for i in recent.get(r["player_id"]) or [] if i["hot"]]
+                r["news"] = items[:2]
+                r["news_signal"] = max(items, key=lambda i: (i["direction"], i["severity"]), default=None)
+                r["priority"] = targets.priority(r, baselines)
+            head.sort(key=lambda r: -r["priority"]["score"])
+
+        if summary["waiver"]["type_code"] == 2:
+            for r in head:
                 r["faab"] = faab.suggest(r["priority"]["score"] / 100, market, remaining,
                                          summary["waiver"]["bid_min"], pace, r["position"], history)
-        shortlist.sort(key=lambda r: -r["priority"]["score"])
 
         starters = set((b["my_roster"] or {}).get("starters") or [])
         drops = [{**r, "is_starter": r["player_id"] in starters} for r in sorted(mine, key=lambda r: (r.get("proj_ros") or 0.0))]
@@ -661,7 +681,7 @@ class Service:
             "ros_end_week": ctx["ros_end_week"],
             "clock": self._clock(league, now),
             "faab": {"budget": budget, "remaining": remaining, "pace": pace, "market": market},
-            "targets": shortlist[:limit],
+            "targets": head,
             "drop_candidates": drops[:12],
             "fp": ctx.get("fp_meta"),
             "fp_errors": ctx.get("fp_errors") or [],

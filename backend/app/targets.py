@@ -25,7 +25,7 @@ def _expert(row: dict, waiver_pool: int) -> tuple[float, str | None]:
         return _clamp(share), f"FantasyPros waiver-wire #{fp['waiver_rank']}"
     if fp.get("ros_pos_rank"):
         # Being your position's ROS 25 is roughly a starter; past 60 the experts have no interest.
-        return _clamp(1.0 - (fp["ros_pos_rank"] - 1) / 60.0), f"ROS {fp['ros_pos_rank_label'] or fp['ros_pos_rank']}"
+        return _clamp(1.0 - (fp["ros_pos_rank"] - 1) / 60.0), f"ROS {fp.get('ros_pos_rank_label') or fp['ros_pos_rank']}"
     if fp.get("pos_rank"):
         return _clamp(1.0 - ((fp.get("pos_rank_n") or 99) - 1) / 60.0), f"week {fp['pos_rank']}"
     return 0.0, None

@@ -12,8 +12,9 @@ Three things decide a season, and the app has a page for each:
   before waivers run (with a countdown), and the news that needs a decision. Start here.
 - **Board** — the waiver wire ranked by *claim priority*, not by projection: how much a player
   upgrades your roster, where the experts rank him, whether the market is moving on him, whether he
-  projects like a starter, and whether somebody ahead of him just got hurt. Every score shows its
-  parts. For FAAB leagues it suggests a bid range, calibrated against the winning bids your league
+  projects like a starter, and whether his path just cleared — somebody ahead of him got hurt, or
+  there is news saying he has the job. Every score shows its parts, and the leaders carry their
+  headlines. For FAAB leagues it suggests a bid range, calibrated against the winning bids your league
   has actually paid, with those comparables attached, and it shows when each player comes off
   waivers — league-wide or player by player.
 - **Lineup** — the start/sit call for the week. Slots go to the highest FantasyPros consensus rank;
