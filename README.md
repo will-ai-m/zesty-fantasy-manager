@@ -19,6 +19,14 @@ the actual moves in Sleeper.
 - **Planner** — queue adds/drops/bids per league, see FAAB after planned bids, mark done once you make
   the move in Sleeper. Stored in `data/plans.json`.
 
+## Configure
+
+```bash
+cp .env.example .env    # then set SLEEPER_USERNAME to your Sleeper username
+```
+
+`.env` is gitignored. Environment variables override it.
+
 ## Run
 
 Backend (FastAPI, Python 3.12+):
@@ -35,8 +43,7 @@ pnpm --dir frontend install
 pnpm --dir frontend dev      # http://localhost:5173, proxies /api to :8000
 ```
 
-Set `SLEEPER_USERNAME` to use a different Sleeper account (defaults to `dubyu`). Cached Sleeper data lives
-in `data/cache/` (players file refreshed daily; projections/stats every 10–30 min; rosters every minute).
+Cached Sleeper data lives in `data/cache/` (players file refreshed daily; projections/stats every 10–30 min; rosters every minute).
 The ↻ button in the header drops the cache.
 
 ## Layout

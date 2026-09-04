@@ -9,3 +9,6 @@ frontend/dist/
 data/
 # misc
 .DS_Store
+
+# local config
+.env

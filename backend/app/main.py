@@ -8,7 +8,7 @@ from fastapi.middleware.cors import CORSMiddleware
 from fastapi.responses import JSONResponse
 
 from .cache import Cache
-from .config import DATA_DIR
+from .config import DATA_DIR, ConfigError
 from .plans import PlanIn, PlanPatch, PlanStore
 from .services import Service
 from .sleeper import Sleeper
@@ -28,6 +28,11 @@ async def lifespan(app: FastAPI):
 
 app = FastAPI(title="Zesty Fantasy Manager", lifespan=lifespan)
 app.add_middleware(CORSMiddleware, allow_origins=["http://localhost:5173", "http://127.0.0.1:5173"], allow_methods=["*"], allow_headers=["*"])
+
+
+@app.exception_handler(ConfigError)
+async def config_error(_, exc: ConfigError):
+    return JSONResponse(status_code=500, content={"detail": str(exc)})
 
 
 @app.exception_handler(httpx.HTTPStatusError)

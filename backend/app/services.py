@@ -5,7 +5,7 @@ import asyncio
 import math
 from typing import Any
 
-from .config import FANTASY_POSITIONS, OUT_STATUSES, SLEEPER_USERNAME
+from .config import FANTASY_POSITIONS, OUT_STATUSES, require_username
 from .lineup import optimal_lineup, starting_slots
 from .scoring import score
 from .sleeper import Sleeper
@@ -32,7 +32,7 @@ class Service:
         return {**st, "current_week": week}
 
     async def me(self) -> dict:
-        user = await self.s.user(SLEEPER_USERNAME)
+        user = await self.s.user(require_username())
         st = await self.state()
         season = st["league_season"] if st.get("league_season") else st["season"]
         leagues = await self.s.user_leagues(user["user_id"], season)
@@ -45,7 +45,7 @@ class Service:
 
     async def _league_bundle(self, league_id: str, user_id: str | None = None) -> dict:
         if user_id is None:
-            user_id = (await self.s.user(SLEEPER_USERNAME))["user_id"]
+            user_id = (await self.s.user(require_username()))["user_id"]
         league, rosters, users = await asyncio.gather(
             self.s.league(league_id), self.s.rosters(league_id), self.s.users(league_id)
         )
