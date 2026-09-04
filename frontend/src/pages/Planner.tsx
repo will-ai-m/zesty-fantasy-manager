@@ -32,6 +32,16 @@ export default function Planner() {
   const del = useMutation({ mutationFn: api.deletePlan, onSuccess: () => qc.invalidateQueries({ queryKey: ['plans'] }) })
   const [showDone, setShowDone] = useState(false)
 
+  /** Claims run in the order you set them, so moving one renumbers the whole league's queue. */
+  const reorder = (rows: Plan[], index: number, delta: number) => {
+    const next = [...rows]
+    const [moved] = next.splice(index, 1)
+    next.splice(index + delta, 0, moved)
+    next.forEach((p, i) => {
+      if (p.priority !== i + 1) patch.mutate({ id: p.id, body: { priority: i + 1 } })
+    })
+  }
+
   if (isLoading) return <Spinner label="Loading plans…" />
   if (error) return <ErrorBox error={error} />
   const plans = data ?? []
@@ -57,16 +67,26 @@ export default function Planner() {
               {isFaab && planned.length > 0 && <Chip tone={faab - bids < 0 ? 'red' : 'stone'}>${bids} planned → ${faab - bids} after</Chip>}
               {!isFaab && lg.my_team?.waiver_position != null && <Chip>Waiver #{lg.my_team.waiver_position}</Chip>}
               <Chip>{planned.length} planned</Chip>
+              {isFaab && planned.length > 1 && <Chip title="Sleeper runs your claims in this order: if an early one lands, later ones still run unless the roster is full">ordered</Chip>}
               <button onClick={() => openPlan({ leagueId: lg.league_id })} className="ml-auto rounded border border-stone-300 px-2 py-0.5 text-[11px] hover:bg-stone-50">+ Drop-only plan</button>
             </div>
             {mine.length === 0 ? (
               <div className="px-3 py-3 text-[12px] text-stone-500">No planned moves. Use “Plan” on the Waivers or Trends page.</div>
             ) : (
               <table className="data w-full">
-                <thead><tr><th>Add</th><th>Drop</th>{isFaab && <th className="text-right">Bid</th>}<th>Note</th><th>Status</th><th>Updated</th><th></th></tr></thead>
+                <thead><tr><th title="Claims are processed in this order, so put the one you most want first">#</th><th>Add</th><th>Drop</th>{isFaab && <th className="text-right">Bid</th>}<th>Note</th><th>Status</th><th>Updated</th><th></th></tr></thead>
                 <tbody>
-                  {mine.map((p) => (
+                  {mine.map((p, i) => (
                     <tr key={p.id} className={p.status !== 'planned' ? 'text-stone-400' : ''}>
+                      <td className="num w-10 whitespace-nowrap text-stone-500">
+                        {i + 1}
+                        {p.status === 'planned' && (
+                          <>
+                            <button disabled={i === 0} onClick={() => reorder(mine, i, -1)} title="Claim this one earlier" className="ml-1 disabled:opacity-20">↑</button>
+                            <button disabled={i === mine.length - 1} onClick={() => reorder(mine, i, 1)} title="Claim this one later" className="disabled:opacity-20">↓</button>
+                          </>
+                        )}
+                      </td>
                       <td><PlayerLabel p={p.add_player} /></td>
                       <td><PlayerLabel p={p.drop_player} /></td>
                       {isFaab && <td className="num text-right"><Editable value={p.bid == null ? '' : String(p.bid)} type="number" className="w-16 text-right num" onSave={(v) => patch.mutate({ id: p.id, body: { bid: Number(v) || 0 } })} /></td>}

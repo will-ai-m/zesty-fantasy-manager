@@ -5,6 +5,7 @@ import { fmt, fmtInt, OUT_STATUSES, pct, POS_ORDER, shortDate } from '../lib/for
 import { useApp } from '../components/AppContext'
 import { Chip, ErrorBox, PlatformBadge, PlayerCell, Pos, Spinner } from '../components/Badges'
 import { DataTable, type Column } from '../components/DataTable'
+import { FpRank } from '../components/Weekly'
 
 const POS_FILTERS = ['ALL', 'QB', 'RB', 'WR', 'TE', 'FLEX', 'K', 'DEF']
 
@@ -15,6 +16,8 @@ export function playerColumns(opts: { week: number; rosEnd: number; onPlan?: (p:
     { key: 'opp', header: `Wk ${opts.week} opp`, title: 'Opponent this week', render: (p) => <span className={p.on_bye ? 'text-stone-400' : ''}>{p.on_bye ? 'BYE' : p.opponent ?? '—'}</span>, sort: (p) => p.opponent },
     { key: 'bye', header: 'Bye', render: (p) => <span className={p.bye_week === opts.week ? 'font-semibold text-red-700' : 'text-stone-500'}>{p.bye_week ?? '—'}</span>, sort: (p) => p.bye_week, align: 'center' },
     { key: 'depth', header: 'Dep', title: 'Depth chart order at position', render: (p) => <span className="text-stone-600">{p.depth_chart_position ? `${p.depth_chart_position}${p.depth_chart_order ?? ''}` : '—'}</span>, sort: (p) => p.depth_chart_order, align: 'center' },
+    { key: 'fp_week', header: 'ECR', title: 'FantasyPros expert consensus rank for this week, with tier and the move since last week', render: (p) => <FpRank fp={p.fp} />, sort: (p) => p.fp?.pos_rank_n, align: 'right' },
+    { key: 'fp_ros', header: 'ROS ECR', title: 'FantasyPros rest-of-season consensus rank', render: (p) => <FpRank fp={p.fp} kind="ros" />, sort: (p) => p.fp?.ros_pos_rank, align: 'right' },
     { key: 'owned', header: 'Own%', title: 'Percent of Sleeper leagues where rostered', render: (p) => pct(p.owned), sort: (p) => p.owned, align: 'right', desc: true },
     { key: 'started', header: 'Start%', title: 'Percent of Sleeper leagues where started', render: (p) => pct(p.started), sort: (p) => p.started, align: 'right', desc: true },
     ...(opts.espn ? [
@@ -101,7 +104,10 @@ export default function Waivers() {
           {league.waiver.bid_min > 0 && <Chip>Min bid ${league.waiver.bid_min}</Chip>}
           <Chip>{league.scoring_format}{league.pass_td ? ` · ${league.pass_td}pt pass TD` : ''}</Chip>
         </div>
-        <span className="ml-auto text-[12px] text-stone-500">{rows.length} of {data?.players.length ?? 0} free agents</span>
+        <span className="ml-auto text-[12px] text-stone-500">
+          {rows.length} of {data?.players.length ?? 0} free agents
+          {data?.fp && <span className="ml-2 text-stone-400">FantasyPros {data.fp.scoring} · {data.fp.experts} experts</span>}
+        </span>
       </div>
 
       <div className="flex flex-wrap items-center gap-3">

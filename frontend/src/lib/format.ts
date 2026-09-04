@@ -17,6 +17,43 @@ export const timeAgo = (ms: number | null | undefined): string => {
   return `${Math.round(h / 24)}d ago`
 }
 
+/** "2d 4h" / "3h 12m" / "18m" until a deadline; "now" once it has passed. */
+export const countdown = (ms: number | null | undefined): string => {
+  if (!ms) return '—'
+  const secs = Math.round((ms - Date.now()) / 1000)
+  if (secs <= 0) return 'now'
+  const d = Math.floor(secs / 86400)
+  const h = Math.floor((secs % 86400) / 3600)
+  const m = Math.floor((secs % 3600) / 60)
+  if (d) return `${d}d ${h}h`
+  if (h) return `${h}h ${m}m`
+  return `${m}m`
+}
+
+/** "Wed 12 AM" — the weekday matters more than the date for a waiver run. */
+export const dayTime = (ms: number | null | undefined): string => {
+  if (!ms) return '—'
+  const d = new Date(ms)
+  return `${d.toLocaleDateString(undefined, { weekday: 'short' })} ${d.toLocaleTimeString(undefined, { hour: 'numeric' })}`
+}
+
+export const gameDate = (iso: string | null | undefined): string => {
+  if (!iso) return '—'
+  const d = new Date(`${iso}T12:00:00`)
+  return d.toLocaleDateString(undefined, { weekday: 'short', month: 'short', day: 'numeric' })
+}
+
+export const NEWS_TONE: Record<string, 'red' | 'amber' | 'green' | 'blue' | 'stone' | 'violet'> = {
+  injury: 'red',
+  suspension: 'red',
+  practice: 'amber',
+  depth: 'green',
+  return: 'green',
+  transaction: 'blue',
+  usage: 'violet',
+  other: 'stone',
+}
+
 export const POS_ORDER = ['QB', 'RB', 'WR', 'TE', 'K', 'DEF']
 
 export const posClass: Record<string, string> = {

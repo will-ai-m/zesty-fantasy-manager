@@ -1,3 +1,38 @@
+/** FantasyPros expert consensus, as far as it covers this player. */
+export interface FpRanks {
+  fp_id?: string
+  position?: string | null
+  pos_rank?: string | null
+  pos_rank_n?: number | null
+  rank?: number | null
+  tier?: number | null
+  rank_std?: number | null
+  ecr_delta?: number | null
+  owned_avg?: number | null
+  opponent?: string | null
+  note?: string | null
+  recommendation?: string | null
+  tag?: string | null
+  ros_rank?: number | null
+  ros_pos_rank?: number | null
+  ros_pos_rank_label?: string | null
+  ros_tier?: number | null
+  ros_ecr_delta?: number | null
+  waiver_rank?: number | null
+  waiver_tier?: number | null
+  waiver_note?: string | null
+}
+
+export interface FpMeta {
+  scoring: string
+  week: number | null
+  type: string | null
+  experts: number | null
+  last_updated: string | null
+  fetched_at: number | null
+  players: number
+}
+
 export type Injury = 'Questionable' | 'Doubtful' | 'Out' | 'IR' | 'PUP' | 'Sus' | 'COV' | 'NA' | 'DNR' | null
 
 export interface Player {
@@ -42,6 +77,151 @@ export interface Player {
   season_ppg: number | null
   prev_season_ppg: number | null
   prev_season_gp: number
+  fp?: FpRanks | null
+  /** The consensus rank expressed in this league's points (see backend/app/ranks.py). */
+  fp_implied?: number | null
+  /** Points between the consensus and the projection, when they meaningfully disagree. */
+  fp_disagreement?: number | null
+}
+
+export interface Opportunity {
+  blockers: { player_id: string; name: string; injury_status: string; certain: boolean }[]
+  certain: boolean
+  reason: string
+}
+
+export interface FaabSuggestion {
+  low: number
+  mid: number
+  high: number
+  share_of_remaining: number | null
+  calibrated: boolean
+  basis: string
+  comparables: { name: string | null; bid: number; week: number | null; position: string | null }[]
+}
+
+export interface Priority {
+  score: number
+  parts: Record<string, number>
+  why: string[]
+}
+
+export interface Target extends Player {
+  priority: Priority
+  faab?: FaabSuggestion
+  clears_at: number | null
+  on_waivers: boolean
+  opportunity: Opportunity | null
+}
+
+export interface WaiverClock {
+  label: string
+  timezone: string
+  next_runs: number[]
+  next_run: number | null
+  clear_days: number | null
+  daily: boolean
+}
+
+export interface FaabMarket {
+  budget: number
+  claims: number
+  won: number
+  max: number | null
+  median: number | null
+  p75: number | null
+  p90: number | null
+  p90_share: number | null
+  top: { player_id: string; name: string | null; position: string | null; bid: number; week: number | null }[]
+}
+
+export interface WaiverBoard {
+  league: LeagueSummary
+  week: number
+  ros_end_week: number
+  clock: WaiverClock
+  faab: { budget: number; remaining: number; pace: number; market: FaabMarket }
+  targets: Target[]
+  drop_candidates: (Player & { is_starter: boolean })[]
+  fp: FpMeta | null
+  fp_errors: string[]
+}
+
+export interface Kickoff { date: string | null; status: string | null; locked: boolean }
+
+export interface LineupSlot {
+  slot: string
+  current: Player | null
+  suggested: Player | null
+  change: boolean
+  delta: number
+  current_lock: Kickoff | null
+  suggested_lock: Kickoff | null
+  locked: boolean
+  reason: string | null
+}
+
+export interface LineupView {
+  league: LeagueSummary
+  week: number
+  basis: 'fantasypros' | 'projections'
+  slots: LineupSlot[]
+  moves: LineupSlot[]
+  watch: { slot: string; player: Player | null; best_replacement: Player | null }[]
+  bench: Player[]
+  totals: { current: number; optimal: number; gain: number; value_gain: number } | null
+  issues: { level: 'error' | 'warn' | 'info'; text: string }[]
+  first_kickoff: string | null
+  fp: FpMeta | null
+  fp_errors: string[]
+}
+
+export interface NewsLeagueStatus { league_id: string; league_name: string; status: 'free' | 'mine' | 'owned'; owner: string | null }
+
+export interface NewsItem {
+  key: string
+  source: string
+  source_key: string
+  player_id: string
+  published: number | null
+  title: string | null
+  description: string | null
+  analysis: string | null
+  url: string | null
+  hot: boolean
+  category: 'injury' | 'practice' | 'depth' | 'transaction' | 'suspension' | 'return' | 'usage' | 'other'
+  severity: number
+  direction: number
+  player: Player
+  leagues: NewsLeagueStatus[]
+  mine: boolean
+  seen: boolean
+  beneficiaries: { player_id: string; name: string; group: string; steps: number; reason: string; player: Player; leagues: NewsLeagueStatus[] }[]
+}
+
+export interface NewsResponse {
+  week: number
+  leagues: { league_id: string; name: string; platform?: Platform }[]
+  items: NewsItem[]
+  unseen: number
+  provider: string | null
+  errors: string[]
+}
+
+export interface WeekLeague {
+  league: LeagueSummary
+  clock?: WaiverClock
+  waivers: { faab?: WaiverBoard['faab']; targets?: Target[]; drop_candidates?: Player[]; error?: string }
+  lineup: { moves?: LineupSlot[]; watch?: LineupView['watch']; issues?: LineupView['issues']; gain?: number | null; basis?: string; first_kickoff?: string | null; error?: string }
+}
+
+export interface WeekView {
+  week: number
+  generated_at: number
+  timezone: string
+  leagues: WeekLeague[]
+  news: NewsItem[]
+  news_errors: string[]
 }
 
 export type Platform = 'sleeper' | 'espn' | 'yahoo'
@@ -99,6 +279,8 @@ export interface WaiversResponse {
   week: number
   ros_end_week: number
   players: Player[]
+  fp: FpMeta | null
+  fp_errors: string[]
 }
 
 export interface Owner { user_id: string | null; display_name: string; team_name: string; avatar: string | null }
@@ -194,6 +376,7 @@ export interface Plan {
   bid: number | null
   note: string
   target_week: number | null
+  priority: number | null
   status: PlanStatus
   created_at: number
   updated_at: number
@@ -221,6 +404,11 @@ const q = (params: Record<string, string | number | undefined | null>) => {
 export const api = {
   me: () => http<Me>('/api/me'),
   waivers: (leagueId: string, week?: number) => http<WaiversResponse>(`/api/leagues/${leagueId}/waivers${q({ week })}`),
+  waiverBoard: (leagueId: string, week?: number) => http<WaiverBoard>(`/api/leagues/${leagueId}/waiver-board${q({ week })}`),
+  lineup: (leagueId: string, week?: number) => http<LineupView>(`/api/leagues/${leagueId}/lineup${q({ week })}`),
+  week: () => http<WeekView>('/api/week'),
+  news: (leagueId?: string | null) => http<NewsResponse>(`/api/news${q({ league_id: leagueId })}`),
+  markNews: (keys: string[], seen = true) => http<{ ok: boolean }>('/api/news/seen', { method: 'POST', body: JSON.stringify({ keys, seen }) }),
   roster: (leagueId: string, week?: number) => http<RosterResponse>(`/api/leagues/${leagueId}/roster${q({ week })}`),
   rosters: (leagueId: string, week?: number) => http<RostersResponse>(`/api/leagues/${leagueId}/rosters${q({ week })}`),
   transactions: (leagueId: string, weeks = 3) => http<TransactionsResponse>(`/api/leagues/${leagueId}/transactions${q({ weeks })}`),
@@ -228,8 +416,9 @@ export const api = {
   myPlayers: (week?: number) => http<MyPlayersResponse>(`/api/my-players${q({ week })}`),
   player: (playerId: string, leagueId?: string | null) => http<PlayerDetail>(`/api/players/${playerId}${q({ league_id: leagueId })}`),
   plans: () => http<Plan[]>('/api/plans'),
-  createPlan: (body: Omit<Plan, 'id' | 'status' | 'created_at' | 'updated_at' | 'add_player' | 'drop_player'>) => http<Plan>('/api/plans', { method: 'POST', body: JSON.stringify(body) }),
-  patchPlan: (id: string, body: Partial<Pick<Plan, 'add_player_id' | 'drop_player_id' | 'bid' | 'note' | 'status' | 'target_week'>>) =>
+  createPlan: (body: Omit<Plan, 'id' | 'status' | 'created_at' | 'updated_at' | 'add_player' | 'drop_player' | 'priority'> & { priority?: number | null }) =>
+    http<Plan>('/api/plans', { method: 'POST', body: JSON.stringify(body) }),
+  patchPlan: (id: string, body: Partial<Pick<Plan, 'add_player_id' | 'drop_player_id' | 'bid' | 'note' | 'status' | 'target_week' | 'priority'>>) =>
     http<Plan>(`/api/plans/${id}`, { method: 'PATCH', body: JSON.stringify(body) }),
   deletePlan: (id: string) => http<void>(`/api/plans/${id}`, { method: 'DELETE' }),
   refresh: () => http<{ ok: boolean }>('/api/cache/refresh', { method: 'POST' }),

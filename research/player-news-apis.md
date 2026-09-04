@@ -114,4 +114,9 @@ Sleeper's GraphQL news. Nothing to copy — the Sleeper path above is better tha
 3. **Classify locally**: keyword rules over title/description (injury, practice, depth chart, transaction, suspension), since Sleeper items carry no category. FantasyPros' `category` + `impact` are the only structured version and need an HOF key.
 4. **Feature hooks**: waiver breakout scoring gets "news in last 72h" and "starter ahead of him is hurt" signals (depth chart + teammate injury items); K/DST streaming gets opponent QB/OL injury items; `get_player_outlook` gives a season blurb for player cards.
 5. **Fallback**: ESPN fantasy news per `espn_id` (via the dynastyprocess crosswalk) if the GraphQL query breaks — same RotoWire content.
-6. **Decision needed**: reading Sleeper's undocumented GraphQL endpoint (anonymous, read-only) vs. staying on documented endpoints only. If strict, the free alternative is ESPN's fantasy news host, which is also undocumented — there is no documented, free, player-keyed news API.
+6. **DECIDED 2026-09-04: Sleeper's GraphQL feed, with ESPN as the fallback.** Anonymous read-only, the
+   same footing as the undocumented projection and stats endpoints already in use; `backend/app/news.py`
+   holds both providers behind one interface, and `ZFM_NEWS=off` disables them.
+7. **DECIDED 2026-09-04: no background polling.** Everything is fetched when a page is opened, so
+   nothing runs while the app is closed. If that ever needs to change, the poller belongs alongside
+   the cache and would want a delivery channel (desktop, email or webhook) chosen first.

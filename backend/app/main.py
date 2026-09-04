@@ -159,7 +159,7 @@ def _plan_player(players: dict, pid: str | None) -> dict | None:
 @app.get("/api/plans")
 async def list_plans():
     store: PlanStore = app.state.plans
-    players = await app.state.sleeper.players()
+    players = await svc().s.players()
     out = []
     for plan in await store.list():
         d = plan.model_dump()

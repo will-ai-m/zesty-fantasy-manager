@@ -7,6 +7,10 @@ import { PlayerDrawer } from './PlayerDrawer'
 import { PlanDialog } from './PlanDialog'
 
 const nav = [
+  { to: '/week', label: 'Week' },
+  { to: '/board', label: 'Board' },
+  { to: '/lineup', label: 'Lineup' },
+  { to: '/news', label: 'News' },
   { to: '/waivers', label: 'Waivers' },
   { to: '/trends', label: 'Trends' },
   { to: '/roster', label: 'Roster' },
