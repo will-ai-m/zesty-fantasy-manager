@@ -3,7 +3,7 @@ import { useQuery } from '@tanstack/react-query'
 import { api, type MyPlayer, type Player, type RosterView } from '../api'
 import { fmt, pct, POS_ORDER } from '../lib/format'
 import { useApp } from '../components/AppContext'
-import { Chip, ErrorBox, PlayerCell, Pos, Spinner } from '../components/Badges'
+import { Chip, ErrorBox, PlatformBadge, PlayerCell, Pos, Spinner } from '../components/Badges'
 import { DataTable, type Column } from '../components/DataTable'
 import { playerColumns } from './Waivers'
 
@@ -111,7 +111,7 @@ function AllMyPlayers() {
     ]
     for (const lg of data?.leagues ?? []) {
       cols.push({
-        key: `lg_${lg.league_id}`, header: lg.name, className: 'border-l border-stone-200',
+        key: `lg_${lg.league_id}`, header: <span className="inline-flex items-center gap-1"><PlatformBadge platform={lg.platform} />{lg.name}</span>, className: 'border-l border-stone-200',
         sort: (p) => { const s = p.leagues.find((l) => l.league_id === lg.league_id); return s ? (s.role === 'BN' ? 0 : s.role === 'IR' ? -1 : 1) * 1000 + (s.proj_week ?? 0) : null },
         desc: true,
         render: (p) => {
@@ -135,7 +135,7 @@ export default function Roster() {
   return (
     <div className="space-y-3">
       <div className="flex items-center gap-3">
-        <h1 className="text-base font-semibold">{tab === 'mine' ? `My roster · ${league?.name ?? ''}` : 'My players across leagues'}</h1>
+        <h1 className="flex items-center gap-2 text-base font-semibold">{tab === 'mine' ? <><PlatformBadge platform={league?.platform} />My roster · {league?.name ?? ''}</> : 'My players across leagues'}</h1>
         <div className="flex rounded-md border border-stone-200 bg-white p-0.5">
           <button onClick={() => setTab('mine')} className={`rounded px-2.5 py-1 text-[12px] ${tab === 'mine' ? 'bg-stone-900 text-white' : 'text-stone-700 hover:bg-stone-100'}`}>This league</button>
           <button onClick={() => setTab('all')} className={`rounded px-2.5 py-1 text-[12px] ${tab === 'all' ? 'bg-stone-900 text-white' : 'text-stone-700 hover:bg-stone-100'}`}>All leagues</button>

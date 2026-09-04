@@ -1,26 +1,41 @@
-"""Assembles the view models the UI needs from raw Sleeper data."""
+"""Assembles the view models the UI needs. Sleeper is the canonical data source (player ids, schedule,
+trending, injuries, projections); other platforms are normalized onto Sleeper's shapes and ids."""
 from __future__ import annotations
 
 import asyncio
 import math
 from typing import Any
 
-from .config import FANTASY_POSITIONS, OUT_STATUSES, require_username
+from .config import ESPN_LEAGUE_IDS, ESPN_SWID, FANTASY_POSITIONS, OUT_STATUSES, require_username
+from .espn import Espn, normalize_league as espn_normalize_league, normalize_pool as espn_normalize_pool, \
+    normalize_transactions as espn_normalize_transactions, stat_id as espn_stat_id
+from .ids import Crosswalk, load_nflverse_ids
 from .lineup import optimal_lineup, starting_slots
 from .scoring import score
 from .sleeper import Sleeper
 
 WEEKDAYS = ["Mon", "Tue", "Wed", "Thu", "Fri", "Sat", "Sun"]  # assumption: Sleeper's waiver_day_of_week is 0=Mon
 REGULAR_SEASON_WEEKS = 18
+PSEUDO_STAT = "_pts"  # lets platform-native point totals flow through score(): stats={"_pts": x}, scoring={"_pts": 1}
 
 
 def _f(x: Any) -> float | None:
     return None if x is None else float(x)
 
 
+def parse_league_id(league_id: str) -> tuple[str, str]:
+    """'espn:123' -> ('espn', '123'); bare ids are Sleeper."""
+    if ":" in league_id:
+        platform, _, raw = league_id.partition(":")
+        return platform, raw
+    return "sleeper", league_id
+
+
 class Service:
-    def __init__(self, sleeper: Sleeper):
+    def __init__(self, sleeper: Sleeper, espn: Espn | None = None):
         self.s = sleeper
+        self.espn = espn
+        self._xw: tuple[int, Crosswalk] | None = None
 
     # ------------------------------------------------------------------ basics
     async def state(self) -> dict:
@@ -31,38 +46,71 @@ class Service:
         week = max(1, min(REGULAR_SEASON_WEEKS, week))
         return {**st, "current_week": week}
 
+    async def _crosswalk(self) -> Crosswalk:
+        players, rows = await asyncio.gather(self.s.players(), load_nflverse_ids(self.s.cache))
+        if self._xw is None or self._xw[0] != id(players):
+            self._xw = (id(players), Crosswalk(players, rows))
+        return self._xw[1]
+
     async def me(self) -> dict:
         user = await self.s.user(require_username())
         st = await self.state()
         season = st["league_season"] if st.get("league_season") else st["season"]
         leagues = await self.s.user_leagues(user["user_id"], season)
-        bundles = await asyncio.gather(*(self._league_bundle(lg["league_id"], user["user_id"]) for lg in leagues))
+        sleeper_bundles = await asyncio.gather(*(self._sleeper_bundle(lg["league_id"], user["user_id"]) for lg in leagues))
+        summaries = [self._league_summary(b) for b in sleeper_bundles]
+        if self.espn:
+            results = await asyncio.gather(*(self._espn_bundle(lid, season) for lid in ESPN_LEAGUE_IDS), return_exceptions=True)
+            for lid, res in zip(ESPN_LEAGUE_IDS, results):
+                if isinstance(res, Exception):
+                    summaries.append({"league_id": f"espn:{lid}", "platform": "espn", "platform_league_id": lid, "name": f"ESPN league {lid}",
+                                      "error": f"ESPN request failed: {res}"})
+                else:
+                    summaries.append(self._league_summary(res))
         return {
             "user": {"user_id": user["user_id"], "username": user["username"], "display_name": user["display_name"], "avatar": user.get("avatar")},
             "state": st,
-            "leagues": [self._league_summary(b) for b in bundles],
+            "leagues": summaries,
         }
 
+    # ----------------------------------------------------------- league bundles
     async def _league_bundle(self, league_id: str, user_id: str | None = None) -> dict:
+        platform, raw = parse_league_id(league_id)
+        if platform == "espn":
+            if not self.espn:
+                raise RuntimeError("ESPN is not configured (set ESPN_S2 / ESPN_SWID / ESPN_LEAGUE_IDS in .env)")
+            st = await self.state()
+            return await self._espn_bundle(raw, st["season"])
+        return await self._sleeper_bundle(raw, user_id)
+
+    async def _sleeper_bundle(self, league_id: str, user_id: str | None = None) -> dict:
         if user_id is None:
             user_id = (await self.s.user(require_username()))["user_id"]
         league, rosters, users = await asyncio.gather(
             self.s.league(league_id), self.s.rosters(league_id), self.s.users(league_id)
         )
+        league = {**league, "platform": "sleeper", "platform_league_id": league_id, "league_id": f"sleeper:{league_id}"}
         users_by_id = {u["user_id"]: u for u in users}
         mine = next((r for r in rosters if r.get("owner_id") == user_id or user_id in (r.get("co_owners") or [])), None)
-        return {"league": league, "rosters": rosters, "users_by_id": users_by_id, "my_roster": mine, "user_id": user_id}
+        return {"league": league, "rosters": rosters, "users_by_id": users_by_id, "my_roster": mine, "user_id": user_id, "synthetic": {}}
+
+    async def _espn_bundle(self, league_id: str, season: str) -> dict:
+        assert self.espn is not None
+        raw, pro_teams, xw = await asyncio.gather(self.espn.league(league_id, season), self.espn.pro_teams(season), self._crosswalk())
+        return espn_normalize_league(raw, league_id, season, ESPN_SWID, xw, pro_teams)
 
     def _owner(self, bundle: dict, roster: dict) -> dict:
         u = bundle["users_by_id"].get(roster.get("owner_id"), {})
         return {
             "user_id": roster.get("owner_id"),
             "display_name": u.get("display_name") or "Unknown",
-            "team_name": (u.get("metadata") or {}).get("team_name") or u.get("display_name") or f"Roster {roster['roster_id']}",
+            "team_name": (u.get("metadata") or {}).get("team_name") or (roster.get("metadata") or {}).get("team_name") or u.get("display_name") or f"Roster {roster['roster_id']}",
             "avatar": u.get("avatar"),
         }
 
     def _ros_end_week(self, league: dict) -> int:
+        if league.get("ros_end_week"):
+            return int(league["ros_end_week"])
         s = league.get("settings", {})
         start = int(s.get("playoff_week_start") or 15)
         teams = int(s.get("playoff_teams") or 6)
@@ -80,6 +128,8 @@ class Service:
         waiver_type = {0: "Rolling priority", 1: "Reverse standings", 2: "FAAB"}.get(s.get("waiver_type"), str(s.get("waiver_type")))
         return {
             "league_id": lg["league_id"],
+            "platform": lg.get("platform", "sleeper"),
+            "platform_league_id": lg.get("platform_league_id"),
             "name": lg["name"],
             "season": lg["season"],
             "status": lg["status"],
@@ -94,12 +144,15 @@ class Service:
                 "budget": budget,
                 "clear_days": s.get("waiver_clear_days"),
                 "day_of_week": WEEKDAYS[s["waiver_day_of_week"]] if s.get("waiver_day_of_week") is not None else None,
+                "days": s.get("waiver_days"),
+                "hour": s.get("waiver_hour"),
                 "daily": bool(s.get("daily_waivers")),
                 "bid_min": s.get("waiver_bid_min", 0),
             },
             "reserve_slots": s.get("reserve_slots", 0),
             "taxi_slots": s.get("taxi_slots", 0),
             "trade_deadline": s.get("trade_deadline"),
+            "trade_deadline_date": s.get("trade_deadline_date"),
             "playoff_week_start": s.get("playoff_week_start"),
             "ros_end_week": self._ros_end_week(lg),
             "my_roster_id": mine["roster_id"] if mine else None,
@@ -128,6 +181,8 @@ class Service:
         return byes, opp
 
     async def _proj_index(self, season: str, week: int) -> dict[str, dict]:
+        if week > REGULAR_SEASON_WEEKS:
+            return {}
         recs = await self.s.projections(season, week)
         return {r["player_id"]: r for r in recs}
 
@@ -143,8 +198,25 @@ class Service:
         conv = lambda rows: {r["player_id"]: int(r["count"]) for r in rows}  # noqa: E731
         return {"adds_24h": conv(a24), "adds_7d": conv(a168), "drops_24h": conv(d24), "drops_7d": conv(d168)}
 
-    async def _week_context(self, league: dict, week: int) -> dict:
+    @staticmethod
+    def _points_by_week(indexes: list[dict[str, dict]], weeks: list[int], scoring: dict) -> dict[str, dict]:
+        out: dict[str, dict] = {}
+        for w, idx in zip(weeks, indexes):
+            for pid, rec in idx.items():
+                pts = score(rec.get("stats"), scoring)
+                if pts is None or not rec.get("stats", {}).get("gp"):
+                    continue
+                e = out.setdefault(pid, {"total": 0.0, "gp": 0, "weeks": {}})
+                e["total"] += pts
+                e["gp"] += 1
+                e["weeks"][w] = pts
+        return out
+
+    async def _week_context(self, b: dict, week: int) -> dict:
         """Everything needed to enrich a player for one league/week."""
+        league = b["league"]
+        if league.get("platform") == "espn":
+            return await self._espn_week_context(b, week)
         st = await self.state()
         season = str(league["season"])
         prev_season = str(int(season) - 1)
@@ -152,6 +224,7 @@ class Service:
         ros_end = self._ros_end_week(league)
         ros_weeks = list(range(week, ros_end + 1))
         past_weeks = list(range(1, week)) if season == st["season"] else list(range(1, REGULAR_SEASON_WEEKS + 1))
+        prev_weeks = list(range(1, REGULAR_SEASON_WEEKS + 1))
 
         players, (byes, opp), research, trending, injuries, proj_by_week, past_stats, prev_stats = await asyncio.gather(
             self.s.players(),
@@ -161,39 +234,73 @@ class Service:
             self.s.injuries(),
             asyncio.gather(*(self._proj_index(season, w) for w in ros_weeks)),
             asyncio.gather(*(self._stats_index(season, w, final=True) for w in past_weeks)),
-            asyncio.gather(*(self._stats_index(prev_season, w, final=True) for w in range(1, REGULAR_SEASON_WEEKS + 1))),
+            asyncio.gather(*(self._stats_index(prev_season, w, final=True) for w in prev_weeks)),
         )
         proj: dict[int, dict[str, dict]] = dict(zip(ros_weeks, proj_by_week))
         next_proj = proj.get(week + 1)
-        if next_proj is None and week + 1 <= REGULAR_SEASON_WEEKS:
+        if next_proj is None:
             next_proj = await self._proj_index(season, week + 1)
 
-        # Season-to-date + previous-season points under this league's scoring.
-        season_pts: dict[str, dict] = {}
-        for w, idx in zip(past_weeks, past_stats):
-            for pid, rec in idx.items():
-                pts = score(rec.get("stats"), scoring)
-                if pts is None or not rec.get("stats", {}).get("gp"):
-                    continue
-                e = season_pts.setdefault(pid, {"total": 0.0, "gp": 0, "weeks": {}})
-                e["total"] += pts
-                e["gp"] += 1
-                e["weeks"][w] = pts
-        prev_pts: dict[str, dict] = {}
-        for idx in prev_stats:
-            for pid, rec in idx.items():
-                pts = score(rec.get("stats"), scoring)
-                if pts is None or not rec.get("stats", {}).get("gp"):
-                    continue
-                e = prev_pts.setdefault(pid, {"total": 0.0, "gp": 0})
-                e["total"] += pts
-                e["gp"] += 1
-
         return {
+            "platform": "sleeper",
             "season": season, "week": week, "ros_end_week": ros_end, "scoring": scoring,
             "players": players, "byes": byes, "opp": opp, "research": research, "trending": trending,
             "injuries": injuries, "proj": proj, "next_proj": next_proj or {},
-            "season_pts": season_pts, "prev_pts": prev_pts,
+            "season_pts": self._points_by_week(past_stats, past_weeks, scoring),
+            "prev_pts": self._points_by_week(prev_stats, prev_weeks, scoring),
+        }
+
+    async def _espn_week_context(self, b: dict, week: int) -> dict:
+        """ESPN leagues: ESPN supplies league-scored current-week and season projections, ownership and
+        availability; Sleeper supplies identity, schedule, trending, injuries, next-week projections and
+        actual stats (scored with the league's translated scoring settings)."""
+        assert self.espn is not None
+        st = await self.state()
+        league = b["league"]
+        raw_id = league["platform_league_id"]
+        season = str(league["season"])
+        prev_season = str(int(season) - 1)
+        scoring = {**league["scoring_settings"], PSEUDO_STAT: 1.0}
+        ros_end = self._ros_end_week(league)
+        past_weeks = list(range(1, week)) if season == st["season"] else list(range(1, REGULAR_SEASON_WEEKS + 1))
+        prev_weeks = list(range(1, REGULAR_SEASON_WEEKS + 1))
+        stat_ids = [espn_stat_id(1, 1, season, week), espn_stat_id(1, 0, season), espn_stat_id(0, 0, season), espn_stat_id(0, 0, prev_season)]
+
+        players, (byes, opp), trending, injuries, next_proj, past_stats, prev_stats, xw, pro_teams, fa_pool, team_pool = await asyncio.gather(
+            self.s.players(),
+            self._schedule_maps(season),
+            self._trending_maps(),
+            self.s.injuries(),
+            self._proj_index(season, week + 1),
+            asyncio.gather(*(self._stats_index(season, w, final=True) for w in past_weeks)),
+            asyncio.gather(*(self._stats_index(prev_season, w, final=True) for w in prev_weeks)),
+            self._crosswalk(),
+            self.espn.pro_teams(season),
+            self.espn.pool(raw_id, season, ("FREEAGENT", "WAIVERS"), 600, stat_ids),
+            self.espn.pool(raw_id, season, ("ONTEAM",), 400, stat_ids),
+        )
+        info_fa, syn_fa = espn_normalize_pool(fa_pool, season, week, xw, pro_teams)
+        info_team, syn_team = espn_normalize_pool(team_pool, season, week, xw, pro_teams)
+        info = {**info_fa, **info_team}
+        merged_players = dict(players)
+        merged_players.update(b.get("synthetic", {}))
+        merged_players.update(syn_fa)
+        merged_players.update(syn_team)
+
+        proj = {week: {pid: {"stats": {PSEUDO_STAT: i["proj_week"]}} for pid, i in info.items() if i.get("proj_week") is not None}}
+        research = {pid: {"owned": i.get("owned") or 0.0, "started": i.get("started") or 0.0} for pid, i in info.items()}
+        ros_override = {pid: round(max(0.0, (i["season_proj"] or 0.0) - (i.get("season_actual") or 0.0)), 1)
+                        for pid, i in info.items() if i.get("season_proj") is not None}
+        rostered = {pid for r in b["rosters"] for pid in (r.get("players") or []) + (r.get("reserve") or [])}
+
+        return {
+            "platform": "espn",
+            "season": season, "week": week, "ros_end_week": ros_end, "scoring": scoring,
+            "players": merged_players, "byes": byes, "opp": opp, "research": research, "trending": trending,
+            "injuries": injuries, "proj": proj, "next_proj": next_proj or {},
+            "season_pts": self._points_by_week(past_stats, past_weeks, scoring),
+            "prev_pts": self._points_by_week(prev_stats, prev_weeks, scoring),
+            "ros_override": ros_override, "espn": info, "pool_ids": set(info) | rostered,
         }
 
     # --------------------------------------------------------- player builders
@@ -245,6 +352,9 @@ class Service:
             if pts is not None:
                 ros += pts
                 ros_any = True
+        if "ros_override" in ctx:
+            ov = ctx["ros_override"].get(pid)
+            ros, ros_any = (ov, True) if ov is not None else (0.0, False)
         r = ctx["research"].get(pid) or {}
         sp = ctx["season_pts"].get(pid)
         pp = ctx["prev_pts"].get(pid)
@@ -267,6 +377,23 @@ class Service:
             "prev_season_ppg": round(pp["total"] / pp["gp"], 1) if pp and pp["gp"] else None,
             "prev_season_gp": pp["gp"] if pp else 0,
         })
+        espn = ctx.get("espn", {}).get(pid) if ctx.get("espn") else None
+        if espn:
+            # Sleeper lists some ESPN "RB"s as FB and some D/ST-eligible players as DT/LB; use ESPN's position there.
+            if row["position"] not in FANTASY_POSITIONS and espn.get("position"):
+                row["position"] = espn["position"]
+                row["positions"] = [espn["position"]]
+            row["platform_status"] = espn.get("status")
+            row["waiver_until"] = espn.get("waiver_until")
+            row["owned_change"] = espn.get("owned_change")
+            row["proj_season"] = espn.get("season_proj")
+            if espn.get("season_actual") is not None and sp:
+                row["season_pts"] = round(float(espn["season_actual"]), 1)
+                row["season_ppg"] = round(float(espn["season_actual"]) / sp["gp"], 1) if sp["gp"] else None
+            if espn.get("prev_season_avg") is not None:
+                row["prev_season_ppg"] = round(float(espn["prev_season_avg"]), 1)
+            if row.get("injury_status") is None and espn.get("injury_status"):
+                row["injury_status"] = espn["injury_status"]
         return row
 
     def _rank_by_position(self, rows: list[dict], key: str, out_key: str) -> None:
@@ -280,6 +407,8 @@ class Service:
 
     def _pool_ids(self, ctx: dict) -> list[str]:
         """All fantasy-relevant players (rostered or not) for ranking purposes."""
+        if "pool_ids" in ctx:
+            return sorted(ctx["pool_ids"])
         ids = []
         week = ctx["week"]
         for pid, p in ctx["players"].items():
@@ -304,9 +433,9 @@ class Service:
         b = await self._league_bundle(league_id)
         st = await self.state()
         week = week or st["current_week"]
-        ctx = await self._week_context(b["league"], week)
+        ctx = await self._week_context(b, week)
         rostered = self._rostered(b)
-        rows = [r for r in (self._enrich(ctx, pid) for pid in self._pool_ids(ctx)) if r]
+        rows = [r for r in (self._enrich(ctx, pid) for pid in self._pool_ids(ctx)) if r and r["position"] in FANTASY_POSITIONS]
         self._rank_by_position(rows, "proj_week", "proj_week_rank")
         self._rank_by_position(rows, "proj_ros", "proj_ros_rank")
         free = [r for r in rows if r["player_id"] not in rostered]
@@ -315,6 +444,7 @@ class Service:
         my_ids = set((b["my_roster"] or {}).get("players") or [])
         mine = [r for r in rows if r["player_id"] in my_ids]
         flex = {"RB", "WR", "TE"}
+
         def weakest(pos: str) -> float | None:
             group = [r for r in mine if (r["position"] in flex if pos in flex else r["position"] == pos)]
             vals = [r.get("proj_ros") or 0.0 for r in group]
@@ -425,7 +555,7 @@ class Service:
         b = await self._league_bundle(league_id)
         st = await self.state()
         week = week or st["current_week"]
-        ctx = await self._week_context(b["league"], week)
+        ctx = await self._week_context(b, week)
         if not b["my_roster"]:
             return {"league": self._league_summary(b), "week": week, "roster": None}
         return {"league": self._league_summary(b), "week": week, "roster": self._roster_view(ctx, b, b["my_roster"])}
@@ -434,7 +564,7 @@ class Service:
         b = await self._league_bundle(league_id)
         st = await self.state()
         week = week or st["current_week"]
-        ctx = await self._week_context(b["league"], week)
+        ctx = await self._week_context(b, week)
         views = [self._roster_view(ctx, b, r) for r in b["rosters"]]
         views.sort(key=lambda v: (-v["record"]["wins"], -(v["fpts"] or 0)))
         return {"league": self._league_summary(b), "week": week, "rosters": views}
@@ -445,11 +575,23 @@ class Service:
         week = st["current_week"]
         players = await self.s.players()
         wk_list = list(range(max(1, week - weeks + 1), week + 1))
-        results = await asyncio.gather(*(self.s.transactions(league_id, w) for w in wk_list))
+        platform = b["league"].get("platform", "sleeper")
+        if platform == "espn":
+            assert self.espn is not None
+            raw, xw = await asyncio.gather(self.espn.transactions(b["league"]["platform_league_id"], str(b["league"]["season"])), self._crosswalk())
+            known = {v: k for k, v in b.get("espn_ids", {}).items()}
+            resolver = {**{eid: pid for eid, pid in xw.espn.items()}, **known}
+            txs_all = espn_normalize_transactions(raw, resolver)
+            txs_all = [t for t in txs_all if (t.get("leg") or week) in wk_list]
+            results = [txs_all]
+        else:
+            results = await asyncio.gather(*(self.s.transactions(b["league"]["platform_league_id"], w) for w in wk_list))
         by_roster = {r["roster_id"]: self._owner(b, r) for r in b["rosters"]}
+        names = dict(players)
+        names.update(b.get("synthetic", {}))
 
         def pl(pid: str) -> dict:
-            p = players.get(pid, {})
+            p = names.get(pid, {})
             return {"player_id": pid, "name": p.get("full_name") or (f"{pid} D/ST" if p.get("position") == "DEF" else pid),
                     "position": p.get("position"), "team": p.get("team")}
 
@@ -471,14 +613,18 @@ class Service:
         out.sort(key=lambda t: -(t.get("status_updated") or t.get("created") or 0))
         return {"league": self._league_summary(b), "weeks": wk_list, "transactions": out}
 
+    async def _all_bundles(self, me: dict) -> list[dict]:
+        ids = [lg["league_id"] for lg in me["leagues"] if not lg.get("error")]
+        return list(await asyncio.gather(*(self._league_bundle(lid, me["user"]["user_id"]) for lid in ids)))
+
     async def trends(self) -> dict:
         me = await self.me()
         week = me["state"]["current_week"]
-        bundles = await asyncio.gather(*(self._league_bundle(lg["league_id"], me["user"]["user_id"]) for lg in me["leagues"]))
-        ctxs = await asyncio.gather(*(self._week_context(b["league"], week) for b in bundles))
+        bundles = await self._all_bundles(me)
+        ctxs = await asyncio.gather(*(self._week_context(b, week) for b in bundles))
         if not ctxs:
             return {"week": week, "leagues": [], "adds": [], "drops": []}
-        base_ctx = ctxs[0]
+        base_ctx = next((c for c in ctxs if c.get("platform") == "sleeper"), ctxs[0])
         trending = base_ctx["trending"]
         rostered_maps = [self._rostered(b) for b in bundles]
 
@@ -503,6 +649,7 @@ class Service:
                         "league_id": b["league"]["league_id"], "league_name": b["league"]["name"],
                         "status": status, "owner": owner,
                         "proj_week": e.get("proj_week"), "proj_ros": e.get("proj_ros"),
+                        "platform_status": e.get("platform_status"), "waiver_until": e.get("waiver_until"),
                     })
                 row["leagues"] = per_league
                 rows.append(row)
@@ -511,7 +658,7 @@ class Service:
 
         return {
             "week": week,
-            "leagues": [{"league_id": b["league"]["league_id"], "name": b["league"]["name"]} for b in bundles],
+            "leagues": [{"league_id": b["league"]["league_id"], "name": b["league"]["name"], "platform": b["league"].get("platform", "sleeper")} for b in bundles],
             "adds": build("adds"),
             "drops": build("drops"),
         }
@@ -519,8 +666,8 @@ class Service:
     async def my_players(self, week: int | None) -> dict:
         me = await self.me()
         week = week or me["state"]["current_week"]
-        bundles = await asyncio.gather(*(self._league_bundle(lg["league_id"], me["user"]["user_id"]) for lg in me["leagues"]))
-        ctxs = await asyncio.gather(*(self._week_context(b["league"], week) for b in bundles))
+        bundles = await self._all_bundles(me)
+        ctxs = await asyncio.gather(*(self._week_context(b, week) for b in bundles))
         merged: dict[str, dict] = {}
         for b, ctx in zip(bundles, ctxs):
             r = b["my_roster"]
@@ -546,7 +693,7 @@ class Service:
                     "role": role_of.get(pid, "BN"), "proj_week": e.get("proj_week"), "proj_ros": e.get("proj_ros"),
                 })
         rows = sorted(merged.values(), key=lambda r: (-len(r["leagues"]), -(r.get("proj_ros") or 0)))
-        return {"week": week, "leagues": [{"league_id": b["league"]["league_id"], "name": b["league"]["name"]} for b in bundles], "players": rows}
+        return {"week": week, "leagues": [{"league_id": b["league"]["league_id"], "name": b["league"]["name"], "platform": b["league"].get("platform", "sleeper")} for b in bundles], "players": rows}
 
     async def player_detail(self, player_id: str, league_id: str | None) -> dict:
         st = await self.state()
@@ -554,7 +701,11 @@ class Service:
         prev_season = str(int(season) - 1)
         scoring: dict[str, float] = {}
         if league_id:
-            scoring = (await self.s.league(league_id))["scoring_settings"]
+            b = await self._league_bundle(league_id)
+            scoring = b["league"]["scoring_settings"]
+        if player_id.startswith("espn:"):
+            return {"player": {"player_id": player_id, "name": player_id, "position": None, "team": None}, "scoring_league_id": league_id,
+                    "current_season": [], "previous_season": [], "note": "No Sleeper record for this player; stats unavailable."}
         players, proj, stats, prev_stats, (byes, opp) = await asyncio.gather(
             self.s.players(), self.s.player_projections(player_id, season), self.s.player_stats(player_id, season),
             self.s.player_stats(player_id, prev_season), self._schedule_maps(season),

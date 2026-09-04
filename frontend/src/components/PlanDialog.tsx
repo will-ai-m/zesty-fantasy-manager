@@ -3,7 +3,7 @@ import { useMutation, useQuery, useQueryClient } from '@tanstack/react-query'
 import { api, type Player } from '../api'
 import { fmt } from '../lib/format'
 import { useApp } from './AppContext'
-import { Pos } from './Badges'
+import { PlatformBadge, Pos } from './Badges'
 
 export function PlanDialog() {
   const { planDraft, closePlan, leagues, week } = useApp()
@@ -68,8 +68,8 @@ export function PlanDialog() {
     <div className="fixed inset-0 z-50 flex items-center justify-center" onClick={closePlan}>
       <div className="absolute inset-0 bg-stone-900/30" />
       <div className="relative w-[520px] max-w-full rounded-lg border border-stone-200 bg-white p-5 shadow-2xl" onClick={(e) => e.stopPropagation()}>
-        <h2 className="text-base font-semibold">Plan a move · {league.name}</h2>
-        <p className="mt-0.5 text-[12px] text-stone-500">Sleeper's API is read-only, so this only records what you intend to do. Make the actual move in Sleeper, then mark it done in the Planner.</p>
+        <h2 className="flex items-center gap-2 text-base font-semibold"><PlatformBadge platform={league.platform} />Plan a move · {league.name}</h2>
+        <p className="mt-0.5 text-[12px] text-stone-500">This only records what you intend to do. Make the actual move in {league.platform === 'espn' ? 'ESPN' : league.platform === 'yahoo' ? 'Yahoo' : 'Sleeper'}, then mark it done in the Planner.</p>
 
         <div className="mt-4 space-y-3">
           <div>

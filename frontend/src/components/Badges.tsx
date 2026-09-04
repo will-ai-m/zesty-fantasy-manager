@@ -1,5 +1,5 @@
 import type { ReactNode } from 'react'
-import { injuryClass, injuryShort, posClass } from '../lib/format'
+import { injuryClass, injuryShort, platformClass, platformLabel, posClass } from '../lib/format'
 import type { Player } from '../api'
 import { useApp } from './AppContext'
 
@@ -59,4 +59,9 @@ export function Spinner({ label = 'Loading…' }: { label?: string }) {
 
 export function ErrorBox({ error }: { error: unknown }) {
   return <div className="m-4 rounded border border-red-200 bg-red-50 p-3 text-red-800">{(error as Error)?.message ?? String(error)}</div>
+}
+
+export function PlatformBadge({ platform, className = '' }: { platform: string | undefined; className?: string }) {
+  if (!platform) return null
+  return <span className={`inline-block rounded px-1 py-0.5 text-[9.5px] font-bold uppercase leading-none tracking-wide ${platformClass[platform] ?? 'bg-stone-100 text-stone-600'} ${className}`}>{platformLabel[platform] ?? platform}</span>
 }

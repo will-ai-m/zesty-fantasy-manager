@@ -3,7 +3,7 @@ import { useQuery } from '@tanstack/react-query'
 import { api, type TrendPlayer } from '../api'
 import { fmt, fmtInt, pct, POS_ORDER } from '../lib/format'
 import { useApp } from '../components/AppContext'
-import { Chip, ErrorBox, PlayerCell, Pos, Spinner } from '../components/Badges'
+import { Chip, ErrorBox, PlatformBadge, PlayerCell, Pos, Spinner } from '../components/Badges'
 import { DataTable, type Column } from '../components/DataTable'
 
 export default function Trends() {
@@ -37,7 +37,7 @@ export default function Trends() {
     for (const lg of data?.leagues ?? []) {
       cols.push({
         key: `lg_${lg.league_id}`,
-        header: lg.name,
+        header: <span className="inline-flex items-center gap-1"><PlatformBadge platform={lg.platform} />{lg.name}</span>,
         title: 'Availability in this league, with projected points this week and rest of season under its scoring',
         className: 'border-l border-stone-200',
         sort: (p) => {
@@ -51,8 +51,8 @@ export default function Trends() {
           return (
             <span className="inline-flex items-center gap-1.5">
               {s.status === 'free' && (
-                <button onClick={() => openPlan({ leagueId: lg.league_id, add: p })} className="rounded border border-emerald-300 bg-emerald-50 px-1.5 py-0.5 text-[11px] font-medium text-emerald-800 hover:bg-emerald-100" title="Free agent — plan a pickup">
-                  Free · Plan
+                <button onClick={() => openPlan({ leagueId: lg.league_id, add: p })} className={`rounded border px-1.5 py-0.5 text-[11px] font-medium ${s.platform_status === 'WAIVERS' ? 'border-amber-300 bg-amber-50 text-amber-800 hover:bg-amber-100' : 'border-emerald-300 bg-emerald-50 text-emerald-800 hover:bg-emerald-100'}`} title={s.platform_status === 'WAIVERS' ? 'On waivers — plan a claim' : 'Free agent — plan a pickup'}>
+                  {s.platform_status === 'WAIVERS' ? 'Waivers' : 'Free'} · Plan
                 </button>
               )}
               {s.status === 'mine' && <Chip tone="blue">Mine</Chip>}

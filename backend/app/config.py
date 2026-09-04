@@ -29,6 +29,11 @@ DATA_DIR = Path(os.environ.get("ZFM_DATA_DIR", ROOT / "data"))
 SLEEPER_USERNAME = os.environ.get("SLEEPER_USERNAME", "").strip()
 SPORT = "nfl"
 
+# ESPN: league ids (comma separated) plus the two browser cookies for private leagues.
+ESPN_LEAGUE_IDS = [x.strip() for x in os.environ.get("ESPN_LEAGUE_IDS", "").split(",") if x.strip()]
+ESPN_S2 = os.environ.get("ESPN_S2", "").strip()
+ESPN_SWID = os.environ.get("ESPN_SWID", "").strip()
+
 
 def require_username() -> str:
     if not SLEEPER_USERNAME:

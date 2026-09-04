@@ -52,3 +52,16 @@ export const injuryShort = (s: string | null | undefined): string => {
 }
 
 export const OUT_STATUSES = new Set(['Out', 'IR', 'PUP', 'Sus', 'COV', 'NA', 'DNR'])
+
+export const platformLabel: Record<string, string> = { sleeper: 'Sleeper', espn: 'ESPN', yahoo: 'Yahoo' }
+export const platformClass: Record<string, string> = {
+  sleeper: 'bg-indigo-100 text-indigo-800',
+  espn: 'bg-red-100 text-red-800',
+  yahoo: 'bg-purple-100 text-purple-800',
+}
+
+export const shortDate = (ms: number | null | undefined): string => {
+  if (!ms) return '—'
+  const d = new Date(ms)
+  return d.toLocaleDateString(undefined, { month: 'short', day: 'numeric' }) + ' ' + d.toLocaleTimeString(undefined, { hour: 'numeric' })
+}

@@ -3,7 +3,7 @@ import { useMutation, useQuery, useQueryClient } from '@tanstack/react-query'
 import { api, type Plan } from '../api'
 import { timeAgo } from '../lib/format'
 import { useApp } from '../components/AppContext'
-import { Chip, ErrorBox, Pos, Spinner } from '../components/Badges'
+import { Chip, ErrorBox, PlatformBadge, Pos, Spinner } from '../components/Badges'
 
 function PlayerLabel({ p }: { p: Plan['add_player'] }) {
   if (!p) return <span className="text-stone-400">—</span>
@@ -52,7 +52,7 @@ export default function Planner() {
         return (
           <section key={lg.league_id} className="rounded-md border border-stone-200 bg-white">
             <div className="flex flex-wrap items-center gap-2 border-b border-stone-200 px-3 py-2">
-              <h2 className="font-semibold">{lg.name}</h2>
+              <h2 className="flex items-center gap-2 font-semibold"><PlatformBadge platform={lg.platform} />{lg.name}</h2>
               {isFaab && <Chip tone="amber">${faab} FAAB left</Chip>}
               {isFaab && planned.length > 0 && <Chip tone={faab - bids < 0 ? 'red' : 'stone'}>${bids} planned → ${faab - bids} after</Chip>}
               {!isFaab && lg.my_team?.waiver_position != null && <Chip>Waiver #{lg.my_team.waiver_position}</Chip>}

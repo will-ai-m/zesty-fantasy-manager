@@ -1,6 +1,6 @@
 """Async Sleeper API client. Read-only. Documented endpoints live under /v1; the stats,
 projections, research, schedule, depth-chart and injury endpoints are the undocumented
-ones the Sleeper app itself uses (see docs/research/sleeper-api.md)."""
+ones the Sleeper app itself uses (see research/sleeper-api.md)."""
 from __future__ import annotations
 
 from typing import Any

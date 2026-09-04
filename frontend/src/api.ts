@@ -32,6 +32,10 @@ export interface Player {
   proj_week_rank?: string | null
   proj_ros_rank?: string | null
   vs_mine?: number | null
+  platform_status?: 'FREEAGENT' | 'WAIVERS' | 'ONTEAM' | null
+  waiver_until?: number | null
+  owned_change?: number | null
+  proj_season?: number | null
   last_week_pts: number | null
   season_pts: number | null
   season_gp: number
@@ -40,8 +44,13 @@ export interface Player {
   prev_season_gp: number
 }
 
+export type Platform = 'sleeper' | 'espn' | 'yahoo'
+
 export interface LeagueSummary {
   league_id: string
+  platform: Platform
+  platform_league_id?: string | null
+  error?: string
   name: string
   season: string
   status: string
@@ -56,12 +65,15 @@ export interface LeagueSummary {
     budget: number
     clear_days: number | null
     day_of_week: string | null
+    days?: string[] | null
+    hour?: number | null
     daily: boolean
     bid_min: number
   }
   reserve_slots: number
   taxi_slots: number
   trade_deadline: number | null
+  trade_deadline_date?: number | null
   playoff_week_start: number | null
   ros_end_week: number
   my_roster_id: number | null
@@ -141,14 +153,16 @@ export interface LeagueStatus {
   owner: string | null
   proj_week: number | null
   proj_ros: number | null
+  platform_status?: string | null
+  waiver_until?: number | null
 }
 export interface TrendPlayer extends Player { leagues: LeagueStatus[] }
-export interface TrendsResponse { week: number; leagues: { league_id: string; name: string }[]; adds: TrendPlayer[]; drops: TrendPlayer[] }
+export interface TrendsResponse { week: number; leagues: { league_id: string; name: string; platform?: Platform }[]; adds: TrendPlayer[]; drops: TrendPlayer[] }
 
 export interface MyPlayer extends Player {
   leagues: { league_id: string; league_name: string; role: string; proj_week: number | null; proj_ros: number | null }[]
 }
-export interface MyPlayersResponse { week: number; leagues: { league_id: string; name: string }[]; players: MyPlayer[] }
+export interface MyPlayersResponse { week: number; leagues: { league_id: string; name: string; platform?: Platform }[]; players: MyPlayer[] }
 
 export interface WeekRow {
   season: string

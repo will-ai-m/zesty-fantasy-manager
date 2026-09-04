@@ -2,7 +2,7 @@ import { NavLink, Outlet } from 'react-router-dom'
 import { useMutation, useQueryClient } from '@tanstack/react-query'
 import { api } from '../api'
 import { useApp } from './AppContext'
-import { ErrorBox, Spinner } from './Badges'
+import { ErrorBox, PlatformBadge, Spinner } from './Badges'
 import { PlayerDrawer } from './PlayerDrawer'
 import { PlanDialog } from './PlanDialog'
 
@@ -15,7 +15,7 @@ const nav = [
 ]
 
 export function Layout() {
-  const { me, loading, error, leagues, leagueId, setLeagueId } = useApp()
+  const { me, loading, error, leagues, erroredLeagues, leagueId, setLeagueId } = useApp()
   const qc = useQueryClient()
   const refresh = useMutation({
     mutationFn: api.refresh,
@@ -25,7 +25,7 @@ export function Layout() {
   return (
     <div className="flex min-h-full flex-col">
       <header className="sticky top-0 z-30 border-b border-stone-200 bg-white/95 backdrop-blur">
-        <div className="flex items-center gap-4 px-4 py-2">
+        <div className="flex items-center gap-4 px-4 py-2 whitespace-nowrap">
           <div className="flex items-baseline gap-2">
             <span className="text-[15px] font-bold tracking-tight">Zesty</span>
             <span className="text-[11px] text-stone-500">{me ? `${me.state.season} · Week ${me.state.current_week}` : ''}</span>
@@ -37,14 +37,16 @@ export function Layout() {
               </NavLink>
             ))}
           </nav>
-          <div className="ml-auto flex items-center gap-1">
-            {leagues.map((l) => (
+          <div className="ml-auto flex items-center gap-1 overflow-x-auto whitespace-nowrap">
+            {[...leagues, ...erroredLeagues].map((l) => (
               <button
                 key={l.league_id}
                 onClick={() => setLeagueId(l.league_id)}
-                className={`rounded-full border px-3 py-1 text-[12px] ${l.league_id === leagueId ? 'border-amber-400 bg-amber-100 text-amber-900 font-medium' : 'border-stone-200 bg-white text-stone-700 hover:bg-stone-50'}`}
-                title={`${l.scoring_format} · ${l.total_rosters} teams · ${l.waiver.type}`}
+                disabled={!!l.error}
+                className={`inline-flex items-center gap-1.5 rounded-full border px-3 py-1 text-[12px] ${l.error ? 'border-red-200 bg-red-50 text-red-700' : l.league_id === leagueId ? 'border-amber-400 bg-amber-100 text-amber-900 font-medium' : 'border-stone-200 bg-white text-stone-700 hover:bg-stone-50'}`}
+                title={l.error ?? `${l.scoring_format} · ${l.total_rosters} teams · ${l.waiver.type}`}
               >
+                <PlatformBadge platform={l.platform} />
                 {l.name}
               </button>
             ))}

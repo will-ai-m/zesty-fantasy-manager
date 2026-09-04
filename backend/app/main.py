@@ -8,7 +8,8 @@ from fastapi.middleware.cors import CORSMiddleware
 from fastapi.responses import JSONResponse
 
 from .cache import Cache
-from .config import DATA_DIR, ConfigError
+from .config import DATA_DIR, ESPN_LEAGUE_IDS, ESPN_S2, ESPN_SWID, ConfigError
+from .espn import Espn
 from .plans import PlanIn, PlanPatch, PlanStore
 from .services import Service
 from .sleeper import Sleeper
@@ -20,10 +21,14 @@ async def lifespan(app: FastAPI):
     sleeper = Sleeper(cache)
     app.state.cache = cache
     app.state.sleeper = sleeper
-    app.state.service = Service(sleeper)
+    espn = Espn(cache, ESPN_S2, ESPN_SWID) if ESPN_LEAGUE_IDS else None
+    app.state.espn = espn
+    app.state.service = Service(sleeper, espn)
     app.state.plans = PlanStore(DATA_DIR / "plans.json")
     yield
     await sleeper.aclose()
+    if espn:
+        await espn.aclose()
 
 
 app = FastAPI(title="Zesty Fantasy Manager", lifespan=lifespan)

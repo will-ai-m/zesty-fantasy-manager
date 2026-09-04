@@ -1,13 +1,29 @@
-# FantasyPros & other data sources — research findings (2026-09-03)
+# FantasyPros & other data sources — research findings (2026-09-03, §A updated 2026-09-04)
 
 ## FantasyPros — two access paths
 
-### A. Official API (`https://api.fantasypros.com/public/v2/json/...`, header `x-api-key`)
-- Docs page reachable: https://api.fantasypros.com/public/v2/docs (endpoint list behind login). Overview: https://www.fantasypros.com/api-data/. Key request: https://secure.fantasypros.com/api-keys/request.
-- Tiers: **Free** (sample data, generous daily limit, prototyping); **Premium** — a personal production key is included with MVP ($8.99/mo) / HOF ($11.99/mo) subscriptions; Commercial (custom).
-- Data: ECR consensus rankings (weekly, ROS, draft, dynasty) with tiers, projections with full stat lines, player IDs/teams/positions, news/injuries, weekly fantasy points.
-- Likely request shape (UNVERIFIED, from community): `/public/v2/json/nfl/{season}/consensus-rankings?position=QB&type=weekly|ros|draft&scoring=PPR|HALF|STD&week=N`. Unauthenticated call returns 403 (verified).
-- **Recommendation: request a free key now; upgrade to MVP if we like it.** It is the only ToS-clean path and gives ROS rankings without the paywall problem below.
+### A. Official API — verified 2026-09-04
+- Base `https://api.fantasypros.com/public/v2/json`, header `x-api-key`. Public Redoc docs: https://api.fantasypros.com/public/v2/docs — the OpenAPI 3.1 spec behind it downloads without a key: https://api.fantasypros.com/public/v2/docs/fantasypros_v2_public.yml ("FantasyPros Public API" v2.0; description: "This is the free limited public API"). Key request: https://secure.fantasypros.com/api-keys/request/. Tiers page: https://www.fantasypros.com/api-data/.
+- Tiers (api-data page, quoted): **Free** "$0 / mo · All endpoints, sample data · Generous daily call limit · Non-production use". **Premium** "$8.99 / mo · Bundled with FantasyPros HOF (from $8.99/mo annual) · Production keys for personal apps · Rankings, projections, players, news & injuries · Personal-use license". **Commercial** custom. On the plans page (https://www.fantasypros.com/premium/plans/) only **HOF** lists the API ("Use FantasyPros data in your own tools and apps. For personal use only."): $22.99/mo monthly, $11.99/mo semi-annual ($71.94), $8.99/mo annual ($107.88). PRO ($3.99–11.99/mo) and MVP ($5.99–16.99/mo) do not include it. **Correction to the 2026-09-03 note: MVP does not include a key, and the free key returns sample data, not live data.**
+- Without a key the gateway answers `{"message":"Forbidden"}` (403) on real routes and `{"message":"Missing Authentication Token"}` on nonexistent ones — a free way to confirm routes. Verified present: `nfl/players`, `nfl/news`, `nfl/injuries`, `nfl/compare-players`, `nfl/2026/rankings`, `nfl/2026/consensus-rankings`, `nfl/2026/projections`, `nfl/2026/player-points`. Not routes: `nfl/adp`, `nfl/2026/experts` (experts live under `rankings/experts`), `dfs`, `start-sit`, `waiver-wire`.
+- Endpoints from the spec (`*` = required; sport ∈ nfl|mlb|nba|nhl|pga|ncaaf):
+
+| Endpoint | Query params |
+|---|---|
+| `GET /{sport}/players` | `player`, `update`, `ecr=included\|excluded`, `external_ids=yahoo\|espn\|cbs\|rts\|fanduel\|draftkings\|fantasydraft\|rotogrinders\|fleaflicker\|rotowire\|rotoworld\|numberfire\|fantrax\|nfl\|mfl\|tsn\|onroto\|xmlteam\|ffwc\|mlbam\|nba`, `show=pos_rank` |
+| `GET /{sport}/{season}/consensus-rankings` | `position*`, `type` (draft\|weekly\|ros), `scoring` (STD\|HALF\|PPR), `week`, `include_idp=true`, `filters`, `experts=show\|available` |
+| `GET /{sport}/{season}/rankings` | `week`, `player`, `filters`, `min`, `range`, `rankstats`, `type=DRAFTERS`, `site_eligibility` |
+| `GET /{sport}/{season}/rankings/experts` | `position`, `type`, `scoring`, `include_overall=true` |
+| `GET /nfl/{season}/projections` | `position*`, `positions`, `players`, `week`, `ros` (default false), `filters` |
+| `GET /nfl/{season}/player-points` | `start` (default 1), `end`, `position=ALL\|QB\|RB\|WR\|TE\|K\|DST\|...`, `scoring=STD\|PPR\|HALF`, `min` |
+| `GET /{sport}/compare-players` | `players*`, `position*`, `year`, `week`, `experts`, `ranking_type=draft\|weekly\|ros`, `details=players\|experts\|all` |
+| `GET /{sport}/news` | `fpid`, `limit` (default 25), `category=injury\|recap\|transaction\|rumor\|breaking`, `order_by=updated\|created` |
+| `GET /{sport}/injuries` | `year`, `week`, `team_id`, `player_ids`, `include_probabilities=true`, `include_minors=true` |
+
+- Response shapes present in the spec: news item `{id, created, created_formated, author, player_id, team_id, title, sport_id, categories[], link, desc, impact}`; projections `{season, week, count, positions, scoring, experts[], players[{fpid, mflid, name, position_id, team_id, filename, stats[]}]}`; player-points `{season, scoring, players[{player_id, player_name, position_id, team_id, filename, games, points, average, weeks{"1": 6.9, ...}}]}`. `consensus-rankings`, `players` and `injuries` have no schema in the spec; the community-reported fields (`rank_ecr, rank_min, rank_max, rank_ave, rank_std, tier, player_owned_avg, ...`) match the website's `ecrData` and are UNVERIFIED for the API.
+- Player ids: FantasyPros `player_id` / `fpid`. `external_ids` has no Sleeper option (nearest: `rotowire`, `espn`, `yahoo`, `mfl`). Join to Sleeper via dynastyprocess `db_playerids.csv` (`fantasypros_id` ↔ `sleeper_id`, verified) or Sleeper's own `rotowire_id` (on 98% of active skill players).
+- Wrappers: PHP only (JoeyMckenzie/fantasypros-php, HansPeterOrding/fantasypros-api-client — UNVERIFIED, GitHub reported the first as moved). No Python/JS wrapper; none of 16 surveyed OSS projects use the official API. A thin httpx client is ~30 lines.
+- **Recommendation (updated 2026-09-04):** the free key is for prototyping only. Live data via the API costs $107.88/yr (HOF annual); it is the only ToS-clean, supported path and includes news + injuries (see player-news-apis.md). Scraping `ecrData` (B) stays the zero-cost path and the current decision. Sleeper's news feed already carries FantasyPros news items, which removes the main reason to pay.
 
 ### B. Public pages with embedded JSON (verified 2026-09-03)
 Every rankings page embeds `var ecrData = {...};` in the HTML. Regex `var ecrData = (\{.*?\});\n`. Needs a browser User-Agent; robots.txt asks `Crawl-delay: 5` and disallows `/ajax/`, `/api/`, `/json/`, `/nfl/ranker/` (rankings pages themselves are allowed).

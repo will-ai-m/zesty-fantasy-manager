@@ -14,6 +14,7 @@ interface AppState {
   loading: boolean
   error: Error | null
   leagues: LeagueSummary[]
+  erroredLeagues: LeagueSummary[]
   leagueId: string | null
   league: LeagueSummary | null
   setLeagueId: (id: string) => void
@@ -34,7 +35,8 @@ export function AppProvider({ children }: { children: ReactNode }) {
   const [drawerPlayer, setDrawerPlayer] = useState<string | null>(null)
   const [planDraft, setPlanDraft] = useState<PlanDraft | null>(null)
 
-  const leagues = useMemo(() => me?.leagues ?? [], [me])
+  const leagues = useMemo(() => (me?.leagues ?? []).filter((l) => !l.error), [me])
+  const erroredLeagues = useMemo(() => (me?.leagues ?? []).filter((l) => !!l.error), [me])
   useEffect(() => {
     if (leagues.length && !leagues.some((l) => l.league_id === leagueId)) {
       setLeagueIdState(leagues[0].league_id)
@@ -51,6 +53,7 @@ export function AppProvider({ children }: { children: ReactNode }) {
     loading: isLoading,
     error: (error as Error | null) ?? null,
     leagues,
+    erroredLeagues,
     leagueId,
     league: leagues.find((l) => l.league_id === leagueId) ?? null,
     setLeagueId,
@@ -61,7 +64,7 @@ export function AppProvider({ children }: { children: ReactNode }) {
     planDraft,
     openPlan: setPlanDraft,
     closePlan: () => setPlanDraft(null),
-  }), [me, isLoading, error, leagues, leagueId, setLeagueId, drawerPlayer, planDraft])
+  }), [me, isLoading, error, leagues, erroredLeagues, leagueId, setLeagueId, drawerPlayer, planDraft])
 
   return <Ctx.Provider value={value}>{children}</Ctx.Provider>
 }

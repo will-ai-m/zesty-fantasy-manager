@@ -1,14 +1,14 @@
 import { useMemo, useState } from 'react'
 import { useQuery } from '@tanstack/react-query'
 import { api, type Player } from '../api'
-import { fmt, fmtInt, OUT_STATUSES, pct, POS_ORDER } from '../lib/format'
+import { fmt, fmtInt, OUT_STATUSES, pct, POS_ORDER, shortDate } from '../lib/format'
 import { useApp } from '../components/AppContext'
-import { Chip, ErrorBox, PlayerCell, Pos, Spinner } from '../components/Badges'
+import { Chip, ErrorBox, PlatformBadge, PlayerCell, Pos, Spinner } from '../components/Badges'
 import { DataTable, type Column } from '../components/DataTable'
 
 const POS_FILTERS = ['ALL', 'QB', 'RB', 'WR', 'TE', 'FLEX', 'K', 'DEF']
 
-export function playerColumns(opts: { week: number; rosEnd: number; onPlan?: (p: Player) => void; showRank?: boolean; vsMine?: boolean }): Column<Player>[] {
+export function playerColumns(opts: { week: number; rosEnd: number; onPlan?: (p: Player) => void; showRank?: boolean; vsMine?: boolean; espn?: boolean }): Column<Player>[] {
   const cols: Column<Player>[] = [
     { key: 'name', header: 'Player', render: (p) => <PlayerCell p={p} />, sort: (p) => p.name },
     { key: 'pos', header: 'Pos', render: (p) => <Pos pos={p.position} />, sort: (p) => POS_ORDER.indexOf(p.position), align: 'center' },
@@ -17,17 +17,21 @@ export function playerColumns(opts: { week: number; rosEnd: number; onPlan?: (p:
     { key: 'depth', header: 'Dep', title: 'Depth chart order at position', render: (p) => <span className="text-stone-600">{p.depth_chart_position ? `${p.depth_chart_position}${p.depth_chart_order ?? ''}` : '—'}</span>, sort: (p) => p.depth_chart_order, align: 'center' },
     { key: 'owned', header: 'Own%', title: 'Percent of Sleeper leagues where rostered', render: (p) => pct(p.owned), sort: (p) => p.owned, align: 'right', desc: true },
     { key: 'started', header: 'Start%', title: 'Percent of Sleeper leagues where started', render: (p) => pct(p.started), sort: (p) => p.started, align: 'right', desc: true },
+    ...(opts.espn ? [
+      { key: 'owned_change', header: 'Own Δ', title: 'ESPN ownership change (percentage points)', render: (p: Player) => p.owned_change == null ? <span className="text-stone-400">·</span> : <span className={p.owned_change > 0 ? 'text-emerald-700' : p.owned_change < 0 ? 'text-red-700' : 'text-stone-400'}>{p.owned_change > 0 ? '+' : ''}{fmt(p.owned_change)}</span>, sort: (p: Player) => p.owned_change, align: 'right' as const, desc: true },
+      { key: 'platform_status', header: 'Avail', title: 'ESPN availability: free agent, or on waivers until the shown time', render: (p: Player) => p.platform_status === 'WAIVERS' ? <span className="text-amber-700" title={p.waiver_until ? `On waivers until ${shortDate(p.waiver_until)}` : 'On waivers'}>Waivers{p.waiver_until ? ` · ${shortDate(p.waiver_until)}` : ''}</span> : p.platform_status === 'FREEAGENT' ? <span className="text-emerald-700">FA</span> : <span className="text-stone-400">—</span>, sort: (p: Player) => p.platform_status === 'FREEAGENT' ? 0 : p.platform_status === 'WAIVERS' ? 1 : 2 },
+    ] : []),
     { key: 'adds_24h', header: '+24h', title: 'Adds across Sleeper, last 24h', render: (p) => <span className={p.adds_24h > 0 ? 'text-emerald-700 font-medium' : 'text-stone-400'}>{p.adds_24h ? fmtInt(p.adds_24h) : '·'}</span>, sort: (p) => p.adds_24h, align: 'right', desc: true },
     { key: 'adds_7d', header: '+7d', title: 'Adds across Sleeper, last 7 days', render: (p) => <span className={p.adds_7d > 0 ? 'text-emerald-700' : 'text-stone-400'}>{p.adds_7d ? fmtInt(p.adds_7d) : '·'}</span>, sort: (p) => p.adds_7d, align: 'right', desc: true },
     { key: 'drops_24h', header: '−24h', title: 'Drops across Sleeper, last 24h', render: (p) => <span className={p.drops_24h > 0 ? 'text-red-700' : 'text-stone-400'}>{p.drops_24h ? fmtInt(p.drops_24h) : '·'}</span>, sort: (p) => p.drops_24h, align: 'right', desc: true },
     {
-      key: 'proj_week', header: `Wk ${opts.week} proj`, title: 'Projected points this week (league scoring)',
+      key: 'proj_week', header: `Wk ${opts.week} proj`, title: opts.espn ? "ESPN's projection for this week under this league's scoring" : 'Projected points this week (league scoring)',
       render: (p) => <span>{fmt(p.proj_week)}{opts.showRank && p.proj_week_rank ? <span className="ml-1 text-[10px] text-stone-400">{p.proj_week_rank}</span> : null}</span>,
       sort: (p) => p.proj_week, align: 'right', desc: true,
     },
-    { key: 'proj_next', header: `Wk ${opts.week + 1} proj`, title: 'Projected points next week', render: (p) => fmt(p.proj_next), sort: (p) => p.proj_next, align: 'right', desc: true },
+    { key: 'proj_next', header: `Wk ${opts.week + 1} proj`, title: opts.espn ? "Sleeper's projection for next week, scored with this league's settings (ESPN only publishes the current week)" : 'Projected points next week', render: (p) => fmt(p.proj_next), sort: (p) => p.proj_next, align: 'right', desc: true },
     {
-      key: 'proj_ros', header: 'ROS', title: `Projected points, weeks ${opts.week}–${opts.rosEnd} (league scoring)`,
+      key: 'proj_ros', header: 'ROS', title: opts.espn ? "ESPN's rest-of-season projection under this league's scoring (season projection minus points already scored)" : `Projected points, weeks ${opts.week}–${opts.rosEnd} (league scoring)`,
       render: (p) => <span className="font-medium">{fmt(p.proj_ros, 0)}{opts.showRank && p.proj_ros_rank ? <span className="ml-1 text-[10px] text-stone-400">{p.proj_ros_rank}</span> : null}</span>,
       sort: (p) => p.proj_ros, align: 'right', desc: true,
     },
@@ -78,9 +82,9 @@ export default function Waivers() {
   }, [data, pos, search, hideOut, relevantOnly])
 
   const columns = useMemo(() => playerColumns({
-    week, rosEnd: data?.ros_end_week ?? 17, showRank: true, vsMine: true,
+    week, rosEnd: data?.ros_end_week ?? 17, showRank: true, vsMine: true, espn: league?.platform === 'espn',
     onPlan: (p) => leagueId && openPlan({ leagueId, add: p }),
-  }), [week, data?.ros_end_week, leagueId, openPlan])
+  }), [week, data?.ros_end_week, leagueId, openPlan, league?.platform])
 
   if (!league) return <Spinner />
   const t = league.my_team
@@ -88,11 +92,13 @@ export default function Waivers() {
   return (
     <div className="space-y-3">
       <div className="flex flex-wrap items-center gap-x-4 gap-y-2">
-        <h1 className="text-base font-semibold">Waiver wire · {league.name}</h1>
+        <h1 className="flex items-center gap-2 text-base font-semibold"><PlatformBadge platform={league.platform} />Waiver wire · {league.name}</h1>
         <div className="flex items-center gap-1.5 text-[12px] text-stone-600">
           <Chip tone="amber">{league.waiver.type}{league.waiver.type_code === 2 && t ? ` · $${t.faab_remaining} of $${league.waiver.budget} left` : ''}</Chip>
           {t?.waiver_position != null && <Chip>Waiver #{t.waiver_position}</Chip>}
-          {league.waiver.day_of_week && <Chip>Runs {league.waiver.day_of_week}{league.waiver.clear_days ? ` · ${league.waiver.clear_days}d clear` : ''}</Chip>}
+          {league.waiver.daily ? <Chip title={league.waiver.days?.join(', ')}>Runs daily{league.waiver.hour != null ? ` · ${league.waiver.hour}:00` : ''}{league.waiver.clear_days ? ` · ${league.waiver.clear_days}d clear` : ''}</Chip>
+            : league.waiver.day_of_week && <Chip>Runs {league.waiver.day_of_week}{league.waiver.clear_days ? ` · ${league.waiver.clear_days}d clear` : ''}</Chip>}
+          {league.waiver.bid_min > 0 && <Chip>Min bid ${league.waiver.bid_min}</Chip>}
           <Chip>{league.scoring_format}{league.pass_td ? ` · ${league.pass_td}pt pass TD` : ''}</Chip>
         </div>
         <span className="ml-auto text-[12px] text-stone-500">{rows.length} of {data?.players.length ?? 0} free agents</span>

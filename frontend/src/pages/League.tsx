@@ -1,9 +1,9 @@
-import { useState } from 'react'
+import { Fragment, useState } from 'react'
 import { useQuery } from '@tanstack/react-query'
 import { api, type RosterView, type Transaction } from '../api'
-import { fmt, timeAgo } from '../lib/format'
+import { fmt, shortDate, timeAgo } from '../lib/format'
 import { useApp } from '../components/AppContext'
-import { Chip, ErrorBox, Pos, Spinner } from '../components/Badges'
+import { Chip, ErrorBox, PlatformBadge, Pos, Spinner } from '../components/Badges'
 import { RosterDetail } from './Roster'
 
 function TxRow({ t }: { t: Transaction }) {
@@ -42,12 +42,12 @@ export default function League() {
   return (
     <div className="space-y-4">
       <div className="flex flex-wrap items-center gap-2">
-        <h1 className="text-base font-semibold">{league.name}</h1>
+        <h1 className="flex items-center gap-2 text-base font-semibold"><PlatformBadge platform={league.platform} />{league.name}</h1>
         <Chip>{league.total_rosters} teams</Chip>
         <Chip>{league.scoring_format}{league.pass_td ? ` · ${league.pass_td}pt pass TD` : ''}</Chip>
         <Chip>{league.roster_positions.filter((p) => p !== 'BN').join(' ')} · {league.roster_positions.filter((p) => p === 'BN').length} BN · {league.reserve_slots} IR</Chip>
-        <Chip tone="amber">{league.waiver.type}{league.waiver.type_code === 2 ? ` $${league.waiver.budget}` : ''} · runs {league.waiver.day_of_week ?? '?'} · {league.waiver.clear_days}d clear</Chip>
-        <Chip>Playoffs wk {league.playoff_week_start} · trade deadline wk {league.trade_deadline}</Chip>
+        <Chip tone="amber">{league.waiver.type}{league.waiver.type_code === 2 ? ` $${league.waiver.budget}` : ''} · runs {league.waiver.daily ? 'daily' : league.waiver.day_of_week ?? '?'} · {league.waiver.clear_days}d clear</Chip>
+        <Chip>Playoffs wk {league.playoff_week_start} · trade deadline {league.trade_deadline_date ? shortDate(league.trade_deadline_date) : league.trade_deadline ? `wk ${league.trade_deadline}` : '—'}</Chip>
       </div>
 
       <section>
@@ -62,8 +62,8 @@ export default function League() {
               </thead>
               <tbody>
                 {rosters.data.rosters.map((r, i) => (
-                  <>
-                    <tr key={r.roster_id} className={`cursor-pointer ${r.is_mine ? 'bg-amber-50/70' : ''}`} onClick={() => setOpen(open === r.roster_id ? null : r.roster_id)}>
+                  <Fragment key={r.roster_id}>
+                    <tr className={`cursor-pointer ${r.is_mine ? 'bg-amber-50/70' : ''}`} onClick={() => setOpen(open === r.roster_id ? null : r.roster_id)}>
                       <td className="text-stone-400">{i + 1}</td>
                       <td className="font-medium">{r.owner.team_name}{r.is_mine && <span className="ml-1.5 text-[10px] font-semibold text-amber-700">YOU</span>}</td>
                       <td className="text-stone-600">{r.owner.display_name}</td>
@@ -79,13 +79,13 @@ export default function League() {
                       </td>
                     </tr>
                     {open === r.roster_id && (
-                      <tr key={`${r.roster_id}-detail`}>
+                      <tr>
                         <td colSpan={11} className="bg-stone-50 p-3">
                           <RosterDetail r={r} week={week} rosEnd={league.ros_end_week} league={league} />
                         </td>
                       </tr>
                     )}
-                  </>
+                  </Fragment>
                 ))}
               </tbody>
             </table>
