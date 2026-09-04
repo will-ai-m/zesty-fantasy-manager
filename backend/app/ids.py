@@ -1,6 +1,6 @@
-"""Player identity across platforms. Sleeper's player_id is the canonical id; ESPN (and later Yahoo)
-ids are mapped onto it using, in order: Sleeper's own cross-ids, the nflverse/DynastyProcess
-crosswalk, and finally a normalized name + position match."""
+"""Player identity across platforms. Sleeper's player_id is the canonical id; ESPN, Yahoo and
+FantasyPros ids are mapped onto it using, in order: Sleeper's own cross-ids, the
+nflverse/DynastyProcess crosswalk, and finally a normalized name + position match."""
 from __future__ import annotations
 
 import csv
@@ -34,7 +34,7 @@ async def load_nflverse_ids(cache: Cache) -> list[dict]:
         rows = []
         for row in csv.DictReader(io.StringIO(r.text)):
             if row.get("sleeper_id"):
-                rows.append({k: row.get(k) or None for k in ("sleeper_id", "espn_id", "yahoo_id", "name", "position")})
+                rows.append({k: row.get(k) or None for k in ("sleeper_id", "espn_id", "yahoo_id", "fantasypros_id", "name", "position")})
         return rows
     return await cache.get("nflverse_ids", DAY, loader, disk=True)
 
@@ -44,6 +44,7 @@ class Crosswalk:
         self.players = sleeper_players
         self.espn: dict[int, str] = {}
         self.yahoo: dict[int, str] = {}
+        self.fp: dict[str, str] = {}
         self.by_name: dict[tuple[str, str], list[str]] = defaultdict(list)
         for pid, p in sleeper_players.items():
             for key, table in (("espn_id", self.espn), ("yahoo_id", self.yahoo)):
@@ -53,8 +54,15 @@ class Crosswalk:
                         table[int(v)] = pid
                     except (TypeError, ValueError):
                         pass
-            if p.get("full_name") and p.get("position"):
-                self.by_name[(normalize_name(p["full_name"]), p["position"])].append(pid)
+            position = p.get("position")
+            if not position:
+                continue
+            # Team defenses have no full_name in Sleeper's file; index them as "City Nickname".
+            names = {p.get("full_name"), f"{p.get('first_name') or ''} {p.get('last_name') or ''}".strip()}
+            for name in filter(None, names):
+                key = (normalize_name(name), position)
+                if pid not in self.by_name[key]:
+                    self.by_name[key].append(pid)
         # nflverse fills gaps but never overrides Sleeper's own ids.
         for row in nflverse_rows:
             sid = row.get("sleeper_id")
@@ -67,6 +75,9 @@ class Crosswalk:
                         table.setdefault(int(float(v)), sid)
                     except (TypeError, ValueError):
                         pass
+            fp_id = row.get("fantasypros_id")
+            if fp_id:
+                self.fp.setdefault(str(fp_id).strip(), sid)
 
     def from_espn(self, espn_id: int, name: str | None, position: str | None, team_abbrev: str | None) -> str | None:
         if position == "DEF" or espn_id <= -16000:
@@ -91,4 +102,28 @@ class Crosswalk:
             cands = self.by_name.get((normalize_name(name), position), [])
             if len(cands) == 1:
                 return cands[0]
+        return None
+
+    def from_fantasypros(self, fp_id: str | None, name: str | None, position: str | None, team: str | None) -> str | None:
+        """FantasyPros ids come from the crosswalk; D/ST rows resolve to Sleeper's team-abbreviation ids."""
+        if position == "DEF":
+            if team and team in self.players:
+                return team
+            if name:
+                cands = self.by_name.get((normalize_name(name), "DEF"), [])
+                if len(cands) == 1:
+                    return cands[0]
+            return None
+        if fp_id:
+            pid = self.fp.get(str(fp_id).strip())
+            if pid:
+                return pid
+        if name and position:
+            cands = self.by_name.get((normalize_name(name), position), [])
+            if len(cands) == 1:
+                return cands[0]
+            if team:
+                same_team = [pid for pid in cands if (self.players.get(pid) or {}).get("team") == team]
+                if len(same_team) == 1:
+                    return same_team[0]
         return None

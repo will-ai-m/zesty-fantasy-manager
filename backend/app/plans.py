@@ -21,6 +21,9 @@ class PlanIn(BaseModel):
     bid: int | None = Field(default=None, ge=0)
     note: str = ""
     target_week: int | None = None
+    # Claim order within the league: Sleeper processes your claims in the order you set, so a
+    # cheaper backup claim behind a big one only costs FAAB if the first fails.
+    priority: int | None = Field(default=None, ge=1)
 
 
 class PlanPatch(BaseModel):
@@ -30,6 +33,7 @@ class PlanPatch(BaseModel):
     note: str | None = None
     status: PlanStatus | None = None
     target_week: int | None = None
+    priority: int | None = Field(default=None, ge=1)
 
 
 class Plan(PlanIn):

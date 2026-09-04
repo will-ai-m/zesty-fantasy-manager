@@ -29,6 +29,20 @@ DATA_DIR = Path(os.environ.get("ZFM_DATA_DIR", ROOT / "data"))
 SLEEPER_USERNAME = os.environ.get("SLEEPER_USERNAME", "").strip()
 SPORT = "nfl"
 
+# Local timezone for waiver-clearing and kickoff times. Sleeper stores waiver hours as a plain
+# hour of day with no zone; this is the zone they are interpreted in.
+TIMEZONE = os.environ.get("ZFM_TIMEZONE", "America/New_York").strip() or "America/New_York"
+
+# FantasyPros rankings are read from the public rankings pages (they embed the table's JSON).
+# Set ZFM_FANTASYPROS=off to run on platform projections alone. The delay is robots.txt's
+# Crawl-delay: 5, applied between page fetches; a cold cache costs ~7 pages.
+FANTASYPROS_ENABLED = os.environ.get("ZFM_FANTASYPROS", "on").strip().lower() not in ("off", "0", "false", "no")
+FANTASYPROS_DELAY = float(os.environ.get("ZFM_FP_DELAY", "5") or 5)
+
+# Player news comes from Sleeper's anonymous GraphQL read endpoint, with ESPN's fantasy news
+# host as the fallback. Set ZFM_NEWS=off to disable both.
+NEWS_ENABLED = os.environ.get("ZFM_NEWS", "on").strip().lower() not in ("off", "0", "false", "no")
+
 # ESPN: league ids (comma separated) plus the two browser cookies for private leagues.
 ESPN_LEAGUE_IDS = [x.strip() for x in os.environ.get("ESPN_LEAGUE_IDS", "").split(",") if x.strip()]
 ESPN_S2 = os.environ.get("ESPN_S2", "").strip()
