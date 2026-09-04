@@ -1,0 +1,32 @@
+@import "tailwindcss";
+
+@theme {
+  --font-sans: ui-sans-serif, system-ui, -apple-system, "Segoe UI", Roboto, "Helvetica Neue", Arial, sans-serif;
+  --font-mono: ui-monospace, SFMono-Regular, Menlo, Consolas, monospace;
+}
+
+:root {
+  color-scheme: light;
+}
+
+html, body, #root {
+  height: 100%;
+}
+
+body {
+  @apply bg-stone-50 text-stone-900 antialiased text-[13px];
+}
+
+.num {
+  @apply tabular-nums font-mono text-[12.5px];
+}
+
+table.data th {
+  @apply sticky top-0 z-10 bg-stone-100 text-stone-600 font-medium text-[11px] uppercase tracking-wide px-2 py-1.5 border-b border-stone-200 whitespace-nowrap select-none;
+}
+table.data td {
+  @apply px-2 py-1 border-b border-stone-100 whitespace-nowrap align-middle;
+}
+table.data tbody tr:hover td {
+  @apply bg-amber-50/60;
+}

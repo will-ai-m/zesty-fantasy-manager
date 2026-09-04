@@ -1,0 +1,11 @@
+# python
+backend/.venv/
+__pycache__/
+*.pyc
+# node
+frontend/node_modules/
+frontend/dist/
+# app data (cache + your plans)
+data/
+# misc
+.DS_Store
