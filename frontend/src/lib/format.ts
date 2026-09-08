@@ -30,11 +30,13 @@ export const countdown = (ms: number | null | undefined): string => {
   return `${m}m`
 }
 
-/** "Wed 12 AM" — the weekday matters more than the date for a waiver run. */
-export const dayTime = (ms: number | null | undefined): string => {
+/** "Wed 12 AM" — the weekday matters more than the date for a waiver run. Rendered in the league's
+ *  timezone when one is given, so it agrees with the label the backend computed it from. */
+export const dayTime = (ms: number | null | undefined, timeZone?: string): string => {
   if (!ms) return '—'
   const d = new Date(ms)
-  return `${d.toLocaleDateString(undefined, { weekday: 'short' })} ${d.toLocaleTimeString(undefined, { hour: 'numeric' })}`
+  const opts = timeZone ? { timeZone } : {}
+  return `${d.toLocaleDateString(undefined, { ...opts, weekday: 'short' })} ${d.toLocaleTimeString(undefined, { ...opts, hour: 'numeric' })}`
 }
 
 export const gameDate = (iso: string | null | undefined): string => {

@@ -66,7 +66,7 @@ export function ClockBar({ clock, faab }: { clock: WaiverClock; faab?: { budget:
     <div className="flex flex-wrap items-center gap-2 text-[12px]">
       <Chip tone={soon ? 'red' : 'amber'} title={`Waivers run ${clock.label} (${clock.timezone})`}>
         Waivers in <span className="font-semibold">{countdown(clock.next_run)}</span>
-        <span className="text-stone-500">· {dayTime(clock.next_run)}</span>
+        <span className="text-stone-500">· {dayTime(clock.next_run, clock.timezone)}</span>
       </Chip>
       <span className="text-stone-500">{clock.label}</span>
       {faab && faab.budget > 0 && (

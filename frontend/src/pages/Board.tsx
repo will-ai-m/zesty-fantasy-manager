@@ -19,6 +19,7 @@ export default function Board() {
   })
   const [pos, setPos] = useState('ALL')
   const [onlyUpgrades, setOnlyUpgrades] = useState(false)
+  const tz = data?.clock.timezone
 
   const rows = useMemo(() => (data?.targets ?? []).filter((t) => {
     if (pos === 'FLEX' ? !['RB', 'WR', 'TE'].includes(t.position) : pos !== 'ALL' && t.position !== pos) return false
@@ -35,8 +36,8 @@ export default function Board() {
     {
       key: 'clears', header: 'Clears', title: 'When he comes off waivers. Blank means he is a free agent you can add now.',
       render: (t) => t.clears_at
-        ? <span className="whitespace-nowrap text-amber-700" title={dayTime(t.clears_at)}>{countdown(t.clears_at)}</span>
-        : <span className="text-emerald-700">free now</span>,
+        ? <span className="whitespace-nowrap text-amber-700" title={dayTime(t.clears_at, tz)}>{countdown(t.clears_at)}</span>
+        : <span className="whitespace-nowrap text-emerald-700">free now</span>,
       sort: (t) => t.clears_at ?? 0, align: 'right',
     },
     { key: 'fp_wire', header: 'Wire', title: 'FantasyPros waiver-wire ranking this week', render: (t) => t.fp?.waiver_rank ? <span className="font-medium">#{t.fp.waiver_rank}</span> : <span className="text-stone-300">—</span>, sort: (t) => t.fp?.waiver_rank, align: 'right' },
@@ -67,7 +68,7 @@ export default function Board() {
         <button onClick={() => leagueId && openPlan({ leagueId, add: t })} className="rounded border border-stone-300 px-2 py-0.5 text-[11px] hover:border-amber-400 hover:bg-amber-50">Plan</button>
       ), align: 'center',
     },
-  ], [week, leagueId, openPlan])
+  ], [week, leagueId, openPlan, tz])
 
   if (!league) return <Spinner />
 
