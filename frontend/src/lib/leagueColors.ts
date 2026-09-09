@@ -24,6 +24,20 @@ const PALETTE = [
   'bg-yellow-500',
 ]
 
+/** Leagues pinned to a chosen color, by league id. These win over the automatic assignment
+ * and do not consume a palette slot, so the remaining leagues still spread out.
+ *
+ * Both of these knowingly reach into hues the palette above avoids: red is also ESPN's
+ * platform badge and the loss color on numeric columns, sky is also the "playing today"
+ * marker. The bar/dot shape is what keeps them apart — if a pinned color ever starts reading
+ * as a status instead of a league, that is the thing to revisit. */
+const OVERRIDES: Record<string, string> = {
+  // WFFL (D League) — 49ers red. Not a Tailwind red: #AA0000 is the actual team scarlet.
+  'sleeper:1393027888856465408': 'bg-[#AA0000]',
+  // Time Tracking FFB 26-27 — sky blue.
+  'espn:1280588303': 'bg-sky-500',
+}
+
 const KEY = 'leagueColors'
 
 /**
@@ -34,10 +48,17 @@ const KEY = 'leagueColors'
 export function assignLeagueColors(leagueIds: string[]): Record<string, string> {
   const stored = load<Record<string, number>>(KEY, {})
   const next = { ...stored }
-  const used = new Set(Object.values(next))
   let changed = false
+  // A league that was auto-assigned before it got pinned should give its slot back.
+  for (const id of Object.keys(OVERRIDES)) {
+    if (next[id] !== undefined) {
+      delete next[id]
+      changed = true
+    }
+  }
+  const used = new Set(Object.values(next))
   for (const id of leagueIds) {
-    if (next[id] !== undefined) continue
+    if (OVERRIDES[id] !== undefined || next[id] !== undefined) continue
     let i = 0
     while (i < PALETTE.length && used.has(i)) i++
     if (i === PALETTE.length) i = Object.keys(next).length % PALETTE.length
@@ -46,7 +67,8 @@ export function assignLeagueColors(leagueIds: string[]): Record<string, string> 
     changed = true
   }
   if (changed) save(KEY, next)
-  return Object.fromEntries(Object.entries(next).map(([id, i]) => [id, PALETTE[i % PALETTE.length]]))
+  const auto = Object.fromEntries(Object.entries(next).map(([id, i]) => [id, PALETTE[i % PALETTE.length]]))
+  return { ...auto, ...OVERRIDES }
 }
 
 export const FALLBACK_COLOR = 'bg-stone-300'
