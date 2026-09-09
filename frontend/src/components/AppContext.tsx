@@ -2,6 +2,7 @@ import { createContext, useCallback, useContext, useEffect, useMemo, useState, t
 import { useQuery } from '@tanstack/react-query'
 import { api, type LeagueSummary, type Me, type Player } from '../api'
 import { load, save } from '../lib/prefs'
+import { assignLeagueColors, FALLBACK_COLOR } from '../lib/leagueColors'
 
 export interface PlanDraft {
   leagueId: string
@@ -19,6 +20,9 @@ interface AppState {
   league: LeagueSummary | null
   setLeagueId: (id: string) => void
   week: number
+  /** Tailwind background class identifying this league. Render it only as a bar or dot — see
+   * lib/leagueColors. */
+  leagueColor: (leagueId: string) => string
   drawerPlayer: string | null
   openPlayer: (playerId: string) => void
   closePlayer: () => void
@@ -43,6 +47,14 @@ export function AppProvider({ children }: { children: ReactNode }) {
     }
   }, [leagues, leagueId])
 
+  // Errored leagues are included so a league that failed to load still keeps its own color in
+  // the sidebar rather than borrowing the next healthy league's.
+  const colors = useMemo(
+    () => assignLeagueColors((me?.leagues ?? []).map((l) => l.league_id)),
+    [me],
+  )
+  const leagueColor = useCallback((id: string) => colors[id] ?? FALLBACK_COLOR, [colors])
+
   const setLeagueId = useCallback((id: string) => {
     setLeagueIdState(id)
     save('leagueId', id)
@@ -58,13 +70,14 @@ export function AppProvider({ children }: { children: ReactNode }) {
     league: leagues.find((l) => l.league_id === leagueId) ?? null,
     setLeagueId,
     week: me?.state.current_week ?? 1,
+    leagueColor,
     drawerPlayer,
     openPlayer: setDrawerPlayer,
     closePlayer: () => setDrawerPlayer(null),
     planDraft,
     openPlan: setPlanDraft,
     closePlan: () => setPlanDraft(null),
-  }), [me, isLoading, error, leagues, erroredLeagues, leagueId, setLeagueId, drawerPlayer, planDraft])
+  }), [me, isLoading, error, leagues, erroredLeagues, leagueId, setLeagueId, leagueColor, drawerPlayer, planDraft])
 
   return <Ctx.Provider value={value}>{children}</Ctx.Provider>
 }

@@ -39,6 +39,11 @@ export interface Player {
   bye_week: number | null
   opponent: string | null
   on_bye: boolean
+  /** Kickoff day of this player's game this week, YYYY-MM-DD in US Eastern. Null on a bye. */
+  game_date: string | null
+  game_status: 'pre_game' | 'in_game' | 'complete' | 'canceled' | null
+  /** Their game is on the NFL's current calendar day (Eastern), decided server-side. */
+  playing_today: boolean
   owned: number
   started: number
   adds_24h: number
@@ -104,6 +109,9 @@ export interface LeagueSummary {
   ros_end_week: number
   my_roster_id: number | null
   my_team: {
+    /** My fantasy team's name in this league (never null in practice — it falls back to the
+     * display name, then "Roster N"). */
+    team_name: string | null
     wins: number
     losses: number
     ties: number
@@ -248,6 +256,8 @@ const q = (params: Record<string, string | number | undefined | null>) => {
 export interface Game {
   game_id: string
   kickoff: string | null
+  /** Kickoff day in US Eastern — compare against GamesResponse.today, not the browser's date. */
+  date_et: string | null
   state: 'pre' | 'in' | 'post' | null
   status_detail: string | null
   away: string | null
@@ -276,6 +286,8 @@ export interface Game {
 export interface GamesResponse {
   season: number
   week: number
+  /** Today's date in US Eastern, as the server sees it. */
+  today: string
   source: string
   priced: number
   games: Game[]

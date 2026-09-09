@@ -3,7 +3,7 @@ import { useQuery } from '@tanstack/react-query'
 import { api, type RosterView, type Transaction } from '../api'
 import { fmt, shortDate, timeAgo } from '../lib/format'
 import { useApp } from '../components/AppContext'
-import { Chip, ErrorBox, PlatformBadge, Pos, Spinner } from '../components/Badges'
+import { Chip, ErrorBox, LeagueBar, PlatformBadge, Pos, Spinner } from '../components/Badges'
 import { RosterDetail } from './Roster'
 
 function TxRow({ t }: { t: Transaction }) {
@@ -42,7 +42,10 @@ export default function League() {
   return (
     <div className="space-y-4">
       <div className="flex flex-wrap items-center gap-2">
-        <h1 className="flex items-center gap-2 text-base font-semibold"><PlatformBadge platform={league.platform} />{league.name}</h1>
+        <h1 className="flex items-stretch gap-2 text-base font-semibold">
+          <LeagueBar leagueId={league.league_id} />
+          <span className="flex items-center gap-2"><PlatformBadge platform={league.platform} />{league.name}</span>
+        </h1>
         <Chip>{league.total_rosters} teams</Chip>
         <Chip>{league.scoring_format}{league.pass_td ? ` · ${league.pass_td}pt pass TD` : ''}</Chip>
         <Chip>{league.roster_positions.filter((p) => p !== 'BN').join(' ')} · {league.roster_positions.filter((p) => p === 'BN').length} BN · {league.reserve_slots} IR</Chip>

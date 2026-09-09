@@ -4,7 +4,9 @@ from __future__ import annotations
 
 import asyncio
 import math
+from datetime import datetime
 from typing import Any
+from zoneinfo import ZoneInfo
 
 from .config import DATA_DIR, ESPN_LEAGUE_IDS, ESPN_SWID, FANTASY_POSITIONS, OUT_STATUSES, require_username
 from . import fantasypros as fp
@@ -18,6 +20,15 @@ from .sleeper import Sleeper
 WEEKDAYS = ["Mon", "Tue", "Wed", "Thu", "Fri", "Sat", "Sun"]  # assumption: Sleeper's waiver_day_of_week is 0=Mon
 REGULAR_SEASON_WEEKS = 18
 PSEUDO_STAT = "_pts"  # lets platform-native point totals flow through score(): stats={"_pts": x}, scoring={"_pts": 1}
+# "Today" for game-day purposes is the NFL's own day. A Sunday-night game is still Sunday's
+# game to a viewer in Los Angeles, and a Monday-nighter is still Monday's in Honolulu, so the
+# league's scheduling timezone beats the server's (or the browser's) local date here.
+EASTERN = ZoneInfo("America/New_York")
+
+
+def today_et() -> str:
+    """Today's date in the NFL's scheduling timezone, as Sleeper's schedule writes it."""
+    return datetime.now(EASTERN).date().isoformat()
 
 
 def _f(x: Any) -> float | None:
@@ -213,6 +224,9 @@ class Service:
             "ros_end_week": self._ros_end_week(lg),
             "my_roster_id": mine["roster_id"] if mine else None,
             "my_team": {
+                # _owner falls back through user metadata -> roster metadata -> display name, so
+                # team_name is always something a human recognises even in leagues nobody renamed.
+                "team_name": self._owner(b, mine)["team_name"] if mine else None,
                 "wins": mine["settings"].get("wins", 0), "losses": mine["settings"].get("losses", 0), "ties": mine["settings"].get("ties", 0),
                 "fpts": _pts(mine["settings"], "fpts"), "waiver_position": mine["settings"].get("waiver_position"),
                 "faab_used": faab_used, "faab_remaining": budget - faab_used,
@@ -220,21 +234,32 @@ class Service:
         }
 
     # ------------------------------------------------------------- week context
-    async def _schedule_maps(self, season: str) -> tuple[dict[str, int | None], dict[int, dict[str, str]]]:
+    async def _schedule_maps(self, season: str) -> tuple[dict[str, int | None], dict[int, dict[str, str]], dict[int, dict[str, dict]]]:
+        """(byes, opponent labels, per-team game info) keyed by week.
+
+        Canceled games are skipped throughout: the 2026 schedule carries one (DAL-SEA, week 6),
+        and counting it would both invent an opponent and hide the bye it created.
+        """
         games = await self.s.schedule(season)
         teams_by_week: dict[int, set[str]] = {}
         opp: dict[int, dict[str, str]] = {}
+        info: dict[int, dict[str, dict]] = {}
         for g in games:
+            if g.get("status") == "canceled":
+                continue
             w = int(g["week"])
             teams_by_week.setdefault(w, set()).update([g["home"], g["away"]])
             opp.setdefault(w, {})[g["home"]] = f"vs {g['away']}"
             opp[w][g["away"]] = f"@ {g['home']}"
+            row = {"game_id": g.get("game_id"), "date": g.get("date"), "status": g.get("status")}
+            info.setdefault(w, {})[g["home"]] = row
+            info[w][g["away"]] = row
         all_teams: set[str] = set().union(*teams_by_week.values()) if teams_by_week else set()
         byes: dict[str, int | None] = {}
         for t in all_teams:
             missing = [w for w in sorted(teams_by_week) if t not in teams_by_week[w]]
             byes[t] = missing[0] if missing else None
-        return byes, opp
+        return byes, opp, info
 
     async def _proj_index(self, season: str, week: int) -> dict[str, dict]:
         if week > REGULAR_SEASON_WEEKS:
@@ -282,7 +307,7 @@ class Service:
         past_weeks = list(range(1, week)) if season == st["season"] else list(range(1, REGULAR_SEASON_WEEKS + 1))
         prev_weeks = list(range(1, REGULAR_SEASON_WEEKS + 1))
 
-        players, (byes, opp), research, trending, injuries, proj_by_week, past_stats, prev_stats = await asyncio.gather(
+        players, (byes, opp, sched), research, trending, injuries, proj_by_week, past_stats, prev_stats = await asyncio.gather(
             self.s.players(),
             self._schedule_maps(season),
             self.s.research(season, week),
@@ -300,7 +325,7 @@ class Service:
         return {
             "platform": "sleeper",
             "season": season, "week": week, "ros_end_week": ros_end, "scoring": scoring,
-            "players": players, "byes": byes, "opp": opp, "research": research, "trending": trending,
+            "players": players, "byes": byes, "opp": opp, "sched": sched, "research": research, "trending": trending,
             "injuries": injuries, "proj": proj, "next_proj": next_proj or {},
             "season_pts": self._points_by_week(past_stats, past_weeks, scoring),
             "prev_pts": self._points_by_week(prev_stats, prev_weeks, scoring),
@@ -322,7 +347,7 @@ class Service:
         prev_weeks = list(range(1, REGULAR_SEASON_WEEKS + 1))
         stat_ids = [espn_stat_id(1, 1, season, week), espn_stat_id(1, 0, season), espn_stat_id(0, 0, season), espn_stat_id(0, 0, prev_season)]
 
-        players, (byes, opp), trending, injuries, next_proj, past_stats, prev_stats, xw, pro_teams, fa_pool, team_pool = await asyncio.gather(
+        players, (byes, opp, sched), trending, injuries, next_proj, past_stats, prev_stats, xw, pro_teams, fa_pool, team_pool = await asyncio.gather(
             self.s.players(),
             self._schedule_maps(season),
             self._trending_maps(),
@@ -352,7 +377,7 @@ class Service:
         return {
             "platform": "espn",
             "season": season, "week": week, "ros_end_week": ros_end, "scoring": scoring,
-            "players": merged_players, "byes": byes, "opp": opp, "research": research, "trending": trending,
+            "players": merged_players, "byes": byes, "opp": opp, "sched": sched, "research": research, "trending": trending,
             "injuries": injuries, "proj": proj, "next_proj": next_proj or {},
             "season_pts": self._points_by_week(past_stats, past_weeks, scoring),
             "prev_pts": self._points_by_week(prev_stats, prev_weeks, scoring),
@@ -367,6 +392,7 @@ class Service:
         inj = ctx["injuries"].get(pid) or {}
         team = p.get("team")
         week = ctx["week"]
+        game = (ctx.get("sched") or {}).get(week, {}).get(team) if team else None
         name = p.get("full_name") or f"{p.get('first_name', '')} {p.get('last_name', '')}".strip() or pid
         if p.get("position") == "DEF":
             name = f"{team} D/ST" if team else name
@@ -390,6 +416,11 @@ class Service:
             "bye_week": ctx["byes"].get(team) if team else None,
             "opponent": ctx["opp"].get(week, {}).get(team) if team else None,
             "on_bye": bool(team) and ctx["byes"].get(team) == week,
+            "game_date": (game or {}).get("date"),
+            "game_status": (game or {}).get("status"),
+            # Answered against the NFL's own calendar day, not the browser's, so every client
+            # agrees on which players are in action right now. See today_et().
+            "playing_today": bool(game) and game.get("date") == today_et(),
             **self._fp_fields(pid),
         }
 
@@ -763,7 +794,7 @@ class Service:
         if player_id.startswith("espn:"):
             return {"player": {"player_id": player_id, "name": player_id, "position": None, "team": None}, "scoring_league_id": league_id,
                     "current_season": [], "previous_season": [], "note": "No Sleeper record for this player; stats unavailable."}
-        players, proj, stats, prev_stats, (byes, opp) = await asyncio.gather(
+        players, proj, stats, prev_stats, (byes, opp, _sched) = await asyncio.gather(
             self.s.players(), self.s.player_projections(player_id, season), self.s.player_stats(player_id, season),
             self.s.player_stats(player_id, prev_season), self._schedule_maps(season),
         )

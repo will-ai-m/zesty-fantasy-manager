@@ -1,9 +1,9 @@
 import { useMemo, useState } from 'react'
 import { useQuery } from '@tanstack/react-query'
 import { api, type Player } from '../api'
-import { fmt, fmtInt, OUT_STATUSES, pct, POS_ORDER, shortDate } from '../lib/format'
+import { fmt, fmtInt, gameDayRowClass, OUT_STATUSES, pct, POS_ORDER, shortDate } from '../lib/format'
 import { useApp } from '../components/AppContext'
-import { Chip, ErrorBox, PlatformBadge, PlayerCell, Pos, Spinner } from '../components/Badges'
+import { Chip, ErrorBox, LeagueBar, PlatformBadge, PlayerCell, Pos, Spinner } from '../components/Badges'
 import { DataTable, type Column } from '../components/DataTable'
 
 /** "WR24" -> 24, for sorting; unranked players sink to the bottom. */
@@ -136,7 +136,10 @@ export default function Waivers() {
   return (
     <div className="space-y-3">
       <div className="flex flex-wrap items-center gap-x-4 gap-y-2">
-        <h1 className="flex items-center gap-2 text-base font-semibold"><PlatformBadge platform={league.platform} />Waiver wire · {league.name}</h1>
+        <h1 className="flex items-stretch gap-2 text-base font-semibold">
+          <LeagueBar leagueId={league.league_id} />
+          <span className="flex items-center gap-2"><PlatformBadge platform={league.platform} />Waiver wire · {league.name}</span>
+        </h1>
         <div className="flex items-center gap-1.5 text-[12px] text-stone-600">
           <Chip tone="amber">{league.waiver.type}{league.waiver.type_code === 2 && t ? ` · $${t.faab_remaining} of $${league.waiver.budget} left` : ''}</Chip>
           {t?.waiver_position != null && <Chip>Waiver #{t.waiver_position}</Chip>}
@@ -162,7 +165,7 @@ export default function Waivers() {
 
       {isLoading && <Spinner label="Building the waiver wire (projections, ownership, trends)…" />}
       {error && <ErrorBox error={error} />}
-      {data && <DataTable rows={rows} columns={columns} rowKey={(p) => p.player_id} initialSort={{ key: 'owned', dir: 'desc' }} />}
+      {data && <DataTable rows={rows} columns={columns} rowKey={(p) => p.player_id} initialSort={{ key: 'owned', dir: 'desc' }} rowClass={gameDayRowClass} />}
     </div>
   )
 }

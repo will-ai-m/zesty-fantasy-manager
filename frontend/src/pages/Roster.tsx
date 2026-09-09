@@ -1,9 +1,9 @@
 import { useMemo, useState } from 'react'
 import { useQuery } from '@tanstack/react-query'
 import { api, type MyPlayer, type Player, type RosterView } from '../api'
-import { fmt, pct, POS_ORDER } from '../lib/format'
+import { fmt, gameDayRowClass, pct, POS_ORDER } from '../lib/format'
 import { useApp } from '../components/AppContext'
-import { Chip, ErrorBox, PlatformBadge, PlayerCell, Pos, Spinner } from '../components/Badges'
+import { Chip, ErrorBox, LeagueBar, LeagueDot, PlatformBadge, PlayerCell, Pos, Spinner } from '../components/Badges'
 import { DataTable, type Column } from '../components/DataTable'
 import { playerColumns } from './Waivers'
 
@@ -54,7 +54,7 @@ export function RosterDetail({ r, week, rosEnd, league }: { r: RosterView; week:
         </ul>
       )}
       <DataTable rows={[...starters, ...bench, ...reserve, ...taxi]} columns={cols} rowKey={(r) => r.key} maxHeight="none"
-        rowClass={(row) => (row.slot === 'BN' ? 'bg-stone-50/60' : row.slot === 'IR' || row.slot === 'TAXI' ? 'bg-red-50/40' : '')} />
+        rowClass={(row) => (row.player && gameDayRowClass(row.player)) || (row.slot === 'BN' ? 'bg-stone-50/60' : row.slot === 'IR' || row.slot === 'TAXI' ? 'bg-red-50/40' : '')} />
       <div className="rounded-md border border-stone-200 bg-white p-3">
         <div className="mb-1 text-[12px] font-semibold uppercase tracking-wide text-stone-500">Optimal lineup by projections</div>
         {changes.length === 0 ? (
@@ -116,7 +116,7 @@ function AllMyPlayers() {
     ]
     for (const lg of data?.leagues ?? []) {
       cols.push({
-        key: `lg_${lg.league_id}`, header: <span className="inline-flex items-center gap-1"><PlatformBadge platform={lg.platform} />{lg.name}</span>, className: 'border-l border-stone-200',
+        key: `lg_${lg.league_id}`, header: <span className="inline-flex items-center gap-1"><LeagueDot leagueId={lg.league_id} /><PlatformBadge platform={lg.platform} />{lg.name}</span>, className: 'border-l border-stone-200',
         sort: (p) => { const s = p.leagues.find((l) => l.league_id === lg.league_id); return s ? (s.role === 'BN' ? 0 : s.role === 'IR' ? -1 : 1) * 1000 + (s.proj_week ?? 0) : null },
         desc: true,
         render: (p) => {
@@ -131,7 +131,7 @@ function AllMyPlayers() {
   if (isLoading) return <Spinner label="Loading players across leagues…" />
   if (error) return <ErrorBox error={error} />
   if (!data) return null
-  return <DataTable rows={data.players} columns={columns} rowKey={(p) => p.player_id} initialSort={{ key: 'owned', dir: 'desc' }} />
+  return <DataTable rows={data.players} columns={columns} rowKey={(p) => p.player_id} initialSort={{ key: 'owned', dir: 'desc' }} rowClass={gameDayRowClass} />
 }
 
 export default function Roster() {
@@ -140,7 +140,18 @@ export default function Roster() {
   return (
     <div className="space-y-3">
       <div className="flex items-center gap-3">
-        <h1 className="flex items-center gap-2 text-base font-semibold">{tab === 'mine' ? <><PlatformBadge platform={league?.platform} />My roster · {league?.name ?? ''}</> : 'My players across leagues'}</h1>
+        <h1 className="flex items-stretch gap-2 text-base font-semibold">
+          {tab === 'mine' && league ? (
+            <>
+              <LeagueBar leagueId={league.league_id} />
+              <span className="flex items-center gap-2">
+                <PlatformBadge platform={league.platform} />
+                {league.my_team?.team_name ?? 'My roster'}
+                <span className="text-[13px] font-normal text-stone-500">{league.name}</span>
+              </span>
+            </>
+          ) : tab === 'mine' ? 'My roster' : 'My players across leagues'}
+        </h1>
         <div className="flex rounded-md border border-stone-200 bg-white p-0.5">
           <button onClick={() => setTab('mine')} className={`rounded px-2.5 py-1 text-[12px] ${tab === 'mine' ? 'bg-stone-900 text-white' : 'text-stone-700 hover:bg-stone-100'}`}>This league</button>
           <button onClick={() => setTab('all')} className={`rounded px-2.5 py-1 text-[12px] ${tab === 'all' ? 'bg-stone-900 text-white' : 'text-stone-700 hover:bg-stone-100'}`}>All leagues</button>

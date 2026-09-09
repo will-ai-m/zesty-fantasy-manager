@@ -64,12 +64,12 @@ export function SidebarGames() {
     staleTime: 5 * 60_000,
   })
 
-  const days: { label: string; games: Game[] }[] = []
+  const days: { label: string; today: boolean; games: Game[] }[] = []
   for (const g of data?.games ?? []) {
     const label = shortDay(g.kickoff)
     const last = days[days.length - 1]
     if (last && last.label === label) last.games.push(g)
-    else days.push({ label, games: [g] })
+    else days.push({ label, today: !!data && g.date_et === data.today, games: [g] })
   }
 
   return (
@@ -82,7 +82,9 @@ export function SidebarGames() {
       {data && data.games.length === 0 && <div className="px-1 py-1 text-[11px] text-stone-400">No games.</div>}
       {days.map((d) => (
         <div key={d.label} className="mb-1">
-          <div className="px-1 py-0.5 text-[10px] font-medium text-stone-400">{d.label}</div>
+          <div className={`px-1 py-0.5 text-[10px] font-medium ${d.today ? 'font-semibold text-sky-700' : 'text-stone-400'}`}>
+            {d.label}{d.today && ' · today'}
+          </div>
           {d.games.map((g) => <Row key={g.game_id} g={g} />)}
         </div>
       ))}

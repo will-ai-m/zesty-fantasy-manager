@@ -1,9 +1,9 @@
 import { useMemo, useState } from 'react'
 import { useQuery } from '@tanstack/react-query'
 import { api, type TrendPlayer } from '../api'
-import { fmt, fmtInt, pct, POS_ORDER } from '../lib/format'
+import { fmt, fmtInt, gameDayRowClass, pct, POS_ORDER } from '../lib/format'
 import { useApp } from '../components/AppContext'
-import { Chip, ErrorBox, PlatformBadge, PlayerCell, Pos, Spinner } from '../components/Badges'
+import { Chip, ErrorBox, LeagueDot, PlatformBadge, PlayerCell, Pos, Spinner } from '../components/Badges'
 import { DataTable, type Column } from '../components/DataTable'
 
 export default function Trends() {
@@ -37,7 +37,7 @@ export default function Trends() {
     for (const lg of data?.leagues ?? []) {
       cols.push({
         key: `lg_${lg.league_id}`,
-        header: <span className="inline-flex items-center gap-1"><PlatformBadge platform={lg.platform} />{lg.name}</span>,
+        header: <span className="inline-flex items-center gap-1"><LeagueDot leagueId={lg.league_id} /><PlatformBadge platform={lg.platform} />{lg.name}</span>,
         title: 'Availability in this league, with projected points this week and rest of season under its scoring',
         className: 'border-l border-stone-200',
         sort: (p) => {
@@ -89,7 +89,7 @@ export default function Trends() {
       </div>
       {isLoading && <Spinner label="Loading trends across your leagues…" />}
       {error && <ErrorBox error={error} />}
-      {data && <DataTable rows={rows} columns={columns} rowKey={(p) => p.player_id} initialSort={{ key: 'count', dir: 'desc' }} />}
+      {data && <DataTable rows={rows} columns={columns} rowKey={(p) => p.player_id} initialSort={{ key: 'count', dir: 'desc' }} rowClass={gameDayRowClass} />}
     </div>
   )
 }

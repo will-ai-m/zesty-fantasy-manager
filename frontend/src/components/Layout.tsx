@@ -3,7 +3,7 @@ import { NavLink, Outlet } from 'react-router-dom'
 import { useMutation, useQueryClient } from '@tanstack/react-query'
 import { api, type LeagueSummary } from '../api'
 import { useApp } from './AppContext'
-import { ErrorBox, PlatformBadge, Spinner } from './Badges'
+import { ErrorBox, LeagueBar, PlatformBadge, Spinner } from './Badges'
 import { PlayerDrawer } from './PlayerDrawer'
 import { PlanDialog } from './PlanDialog'
 import { SidebarGames } from './SidebarGames'
@@ -27,22 +27,27 @@ function LeagueButton({ league, active, collapsed, onSelect }: {
   onSelect: () => void
 }) {
   const t = league.my_team
-  const tip = league.error ?? `${league.scoring_format} · ${league.total_rosters} teams · ${league.waiver.type}`
+  const tip = league.error ?? [t?.team_name, `${league.scoring_format} · ${league.total_rosters} teams · ${league.waiver.type}`].filter(Boolean).join(' — ')
   const tone = league.error
     ? 'border-red-200 bg-red-50 text-red-700'
     : active
       ? 'border-amber-400 bg-amber-100 text-amber-900'
       : 'border-transparent text-stone-700 hover:border-stone-200 hover:bg-stone-50'
 
+  // Collapsed padding is minimal on purpose: at w-12 the platform badge already overflowed
+  // before the bar existed, so the bar gets its 3px without costing more than a hair extra.
   if (collapsed) {
     return (
       <button
         onClick={onSelect}
         disabled={!!league.error}
         title={`${league.name} — ${tip}`}
-        className={`flex w-full justify-center rounded border px-1 py-1.5 ${tone}`}
+        className={`flex w-full items-stretch gap-1 rounded border px-0.5 py-1.5 ${tone}`}
       >
-        <PlatformBadge platform={league.platform} />
+        <LeagueBar leagueId={league.league_id} />
+        <span className="flex flex-1 justify-center">
+          <PlatformBadge platform={league.platform} />
+        </span>
       </button>
     )
   }
@@ -51,21 +56,29 @@ function LeagueButton({ league, active, collapsed, onSelect }: {
       onClick={onSelect}
       disabled={!!league.error}
       title={tip}
-      className={`w-full rounded border px-2 py-1.5 text-left ${tone}`}
+      className={`flex w-full items-stretch gap-1.5 rounded border py-1.5 pl-1.5 pr-2 text-left ${tone}`}
     >
-      <span className="flex items-center gap-1.5">
-        <PlatformBadge platform={league.platform} />
-        <span className={`truncate text-[12.5px] ${active ? 'font-semibold' : ''}`}>{league.name}</span>
-      </span>
-      {league.error ? (
-        <span className="mt-0.5 block truncate text-[10.5px]">{league.error}</span>
-      ) : t ? (
-        <span className="mt-0.5 flex items-center gap-1.5 text-[10.5px] text-stone-500">
-          <span>{record(t)}</span>
-          {league.waiver.type === 'FAAB' && <span>${t.faab_remaining}</span>}
-          {t.waiver_position != null && <span>W#{t.waiver_position}</span>}
+      <LeagueBar leagueId={league.league_id} />
+      <span className="min-w-0 flex-1">
+        <span className="flex items-center gap-1.5">
+          <PlatformBadge platform={league.platform} />
+          <span className={`truncate text-[12.5px] ${active ? 'font-semibold' : ''}`}>{league.name}</span>
         </span>
-      ) : null}
+        {league.error ? (
+          <span className="mt-0.5 block truncate text-[10.5px]">{league.error}</span>
+        ) : t ? (
+          <>
+            {t.team_name && (
+              <span className={`mt-0.5 block truncate text-[11px] ${active ? 'text-amber-800' : 'text-stone-600'}`}>{t.team_name}</span>
+            )}
+            <span className="mt-0.5 flex items-center gap-1.5 text-[10.5px] text-stone-500">
+              <span>{record(t)}</span>
+              {league.waiver.type === 'FAAB' && <span>${t.faab_remaining}</span>}
+              {t.waiver_position != null && <span>W#{t.waiver_position}</span>}
+            </span>
+          </>
+        ) : null}
+      </span>
     </button>
   )
 }

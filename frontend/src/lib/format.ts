@@ -70,3 +70,13 @@ export const shortDate = (ms: number | null | undefined): string => {
   const d = new Date(ms)
   return d.toLocaleDateString(undefined, { month: 'short', day: 'numeric' }) + ' ' + d.toLocaleTimeString(undefined, { hour: 'numeric' })
 }
+
+/** Row tint for a player whose game is on today. Deliberately sky rather than the app's amber
+ * accent or the yellow/orange/red the injury badges own, so "in action today" reads as its own
+ * signal and not as a warning. Live games get a touch more saturation than ones not yet kicked
+ * off; finished ones drop back to plain so a completed Thursday game stops shouting on Sunday. */
+export const gameDayRowClass = (p: { playing_today: boolean; game_status: string | null }): string => {
+  if (!p.playing_today) return ''
+  if (p.game_status === 'complete') return ''
+  return p.game_status === 'in_game' ? 'bg-sky-100/70' : 'bg-sky-50'
+}

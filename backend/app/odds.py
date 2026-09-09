@@ -49,6 +49,21 @@ def _i(v: Any) -> int | None:
     return int(n) if n is not None else None
 
 
+def date_et(kickoff: str | None) -> str | None:
+    """Kickoff's calendar day in the NFL's own timezone. A 8:15pm ET Monday kickoff is stamped
+    Tuesday in UTC, so the raw ISO date would put half of Monday Night Football on the wrong day."""
+    if not kickoff:
+        return None
+    try:
+        return datetime.fromisoformat(kickoff.replace("Z", "+00:00")).astimezone(EASTERN).date().isoformat()
+    except ValueError:
+        return None
+
+
+def today_et() -> str:
+    return datetime.now(EASTERN).date().isoformat()
+
+
 def implied(total: float | None, spread: float | None) -> tuple[float | None, float | None]:
     """(away, home) implied team totals. Both None unless we have a total and a spread."""
     if total is None or spread is None:
@@ -130,6 +145,7 @@ class Odds:
         return {
             "game_id": event.get("id"),
             "kickoff": event.get("date"),
+            "date_et": date_et(event.get("date")),
             "state": status.get("state"),  # pre | in | post
             "status_detail": status.get("shortDetail"),
             "away": away_abbr,
@@ -176,6 +192,7 @@ class Odds:
         return {
             "game_id": f"nflverse:{season}-{week}-{away}-{home}",
             "kickoff": kickoff,
+            "date_et": day or date_et(kickoff),
             "state": "pre",
             "status_detail": None,
             "away": away, "home": home,
@@ -234,6 +251,7 @@ class Odds:
         return {
             "season": season,
             "week": week,
+            "today": today_et(),
             "source": source,
             "priced": sum(1 for g in games if g["odds_source"]),
             "games": games,

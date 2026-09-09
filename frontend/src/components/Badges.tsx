@@ -32,17 +32,33 @@ export function Chip({ children, tone = 'stone', title }: { children: ReactNode;
   return <span title={title} className={`inline-flex items-center gap-1 rounded border px-1.5 py-0.5 text-[11px] leading-none ${tones[tone]}`}>{children}</span>
 }
 
-/** Player name cell: clickable name, team, injury badge, bye marker. */
-export function PlayerCell({ p, showPos = false }: { p: Pick<Player, 'player_id' | 'name' | 'team' | 'position' | 'injury_status' | 'injury_body_part' | 'on_bye'>; showPos?: boolean }) {
+/** "Playing today" marker. Tracks the game's own state so the badge is still true at 11pm:
+ * kicked off -> LIVE, finished -> FINAL, still to come -> TODAY. */
+export function GameDay({ p }: { p: Pick<Player, 'playing_today' | 'game_status' | 'opponent'> }) {
+  if (!p.playing_today) return null
+  const [label, cls] =
+    p.game_status === 'in_game' ? ['LIVE', 'bg-red-600 text-white'] :
+    p.game_status === 'complete' ? ['FINAL', 'bg-stone-200 text-stone-600'] :
+    ['TODAY', 'bg-sky-600 text-white']
+  return (
+    <span title={`Plays today${p.opponent ? ` ${p.opponent}` : ''}`} className={`rounded px-1 py-0.5 text-[9.5px] font-bold leading-none tracking-wide ${cls}`}>
+      {label}
+    </span>
+  )
+}
+
+/** Player name cell: clickable name, team, injury badge, bye and game-day markers. */
+export function PlayerCell({ p, showPos = false }: { p: Pick<Player, 'player_id' | 'name' | 'team' | 'position' | 'injury_status' | 'injury_body_part' | 'on_bye' | 'playing_today' | 'game_status' | 'opponent'>; showPos?: boolean }) {
   const { openPlayer } = useApp()
   return (
     <span className="inline-flex items-center gap-1.5">
       {showPos && <Pos pos={p.position} />}
-      <button type="button" onClick={() => openPlayer(p.player_id)} className="font-medium text-stone-900 hover:text-amber-700 hover:underline text-left">
+      <button type="button" onClick={() => openPlayer(p.player_id)} className={`hover:text-amber-700 hover:underline text-left font-medium ${p.playing_today && p.game_status !== 'complete' ? 'text-sky-900' : 'text-stone-900'}`}>
         {p.name}
       </button>
       <span className="text-stone-500 text-[11px]">{p.team ?? 'FA'}</span>
       <Injury status={p.injury_status} title={p.injury_body_part} />
+      <GameDay p={p} />
       {p.on_bye && <span className="rounded bg-stone-800 px-1 py-0.5 text-[10px] font-semibold leading-none text-white">BYE</span>}
     </span>
   )
@@ -59,6 +75,19 @@ export function Spinner({ label = 'Loading…' }: { label?: string }) {
 
 export function ErrorBox({ error }: { error: unknown }) {
   return <div className="m-4 rounded border border-red-200 bg-red-50 p-3 text-red-800">{(error as Error)?.message ?? String(error)}</div>
+}
+
+/** League identity mark. Two shapes, one meaning: `LeagueBar` for a block of rows that all
+ * belong to one league, `LeagueDot` for a single inline mention. Kept to bars and dots on
+ * purpose — see lib/leagueColors for why the hue alone can't carry this. */
+export function LeagueBar({ leagueId, className = '' }: { leagueId: string; className?: string }) {
+  const { leagueColor } = useApp()
+  return <span aria-hidden className={`w-[3px] shrink-0 self-stretch rounded-full ${leagueColor(leagueId)} ${className}`} />
+}
+
+export function LeagueDot({ leagueId, className = '' }: { leagueId: string; className?: string }) {
+  const { leagueColor } = useApp()
+  return <span aria-hidden className={`inline-block h-2 w-2 shrink-0 rounded-full ${leagueColor(leagueId)} ${className}`} />
 }
 
 export function PlatformBadge({ platform, className = '' }: { platform: string | undefined; className?: string }) {
