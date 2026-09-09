@@ -10,7 +10,7 @@ import { playerColumns } from './Waivers'
 type SlotRow = { slot: string; player: Player | null; key: string }
 
 function slotColumns(week: number, rosEnd: number): Column<SlotRow>[] {
-  const base = playerColumns({ week, rosEnd, fp: true }).filter((c) => !['adds_7d', 'drops_24h'].includes(c.key))
+  const base = playerColumns({ week, rosEnd, fp: true, variant: 'lineup' })
   const wrapped: Column<SlotRow>[] = base.map((c) => ({
     ...c,
     render: (r) => (r.player ? c.render(r.player) : c.key === 'name' ? <span className="text-red-600">Empty</span> : null),
@@ -22,19 +22,18 @@ function slotColumns(week: number, rosEnd: number): Column<SlotRow>[] {
   ]
 }
 
-function TeamHeader({ r, league }: { r: RosterView; league: { waiver: { budget: number; type_code: number } } }) {
+// Record, FAAB and waiver position are deliberately absent: the sidebar carries them for your
+// own team, and the League table already has a column for each on every team.
+function TeamHeader({ r }: { r: RosterView }) {
   return (
     <div className="flex flex-wrap items-center gap-2 text-[12px]">
-      <Chip>{r.record.wins}-{r.record.losses}{r.record.ties ? `-${r.record.ties}` : ''}</Chip>
       <Chip>PF {fmt(r.fpts)}</Chip>
-      {league.waiver.type_code === 2 && <Chip tone="amber">${r.faab_remaining} / ${league.waiver.budget} FAAB</Chip>}
-      {r.waiver_position != null && <Chip>Waiver #{r.waiver_position}</Chip>}
       <Chip tone={r.optimal.gain > 0.5 ? 'red' : 'green'}>Proj {fmt(r.optimal.current_total)} · optimal {fmt(r.optimal.optimal_total)}</Chip>
     </div>
   )
 }
 
-export function RosterDetail({ r, week, rosEnd, league }: { r: RosterView; week: number; rosEnd: number; league: { waiver: { budget: number; type_code: number } } }) {
+export function RosterDetail({ r, week, rosEnd }: { r: RosterView; week: number; rosEnd: number }) {
   const cols = useMemo(() => slotColumns(week, rosEnd), [week, rosEnd])
   const starters: SlotRow[] = r.starters.map((s, i) => ({ slot: s.slot, player: s.player, key: `${s.slot}-${i}` }))
   const bench: SlotRow[] = r.bench.map((p) => ({ slot: 'BN', player: p, key: p.player_id }))
@@ -43,7 +42,7 @@ export function RosterDetail({ r, week, rosEnd, league }: { r: RosterView; week:
   const changes = r.optimal.rows.filter((o) => o.change)
   return (
     <div className="space-y-3">
-      <TeamHeader r={r} league={league} />
+      <TeamHeader r={r} />
       {r.flags.length > 0 && (
         <ul className="space-y-0.5">
           {r.flags.map((f, i) => (
@@ -92,7 +91,7 @@ function MyRoster() {
   if (error) return <ErrorBox error={error} />
   if (!data || !league) return null
   if (!data.roster) return <div className="text-stone-500">You do not have a roster in this league.</div>
-  return <RosterDetail r={data.roster} week={week} rosEnd={league.ros_end_week} league={league} />
+  return <RosterDetail r={data.roster} week={week} rosEnd={league.ros_end_week} />
 }
 
 function AllMyPlayers() {

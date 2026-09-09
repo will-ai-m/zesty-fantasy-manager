@@ -61,7 +61,7 @@ export default function League() {
           <div className="overflow-hidden rounded-md border border-stone-200 bg-white">
             <table className="data w-full">
               <thead>
-                <tr><th></th><th>Team</th><th>Owner</th><th className="text-right">W-L</th><th className="text-right">PF</th><th className="text-right">PA</th><th className="text-right">Proj wk {week}</th><th className="text-right">FAAB left</th><th className="text-right">Waiver #</th><th className="text-right">Moves</th><th>Roster</th></tr>
+                <tr><th></th><th>Team</th><th>Owner</th><th className="text-right">W-L</th><th className="text-right">PF</th><th className="text-right">PA</th><th className="text-right">Proj wk {week}</th><th className="text-right">FAAB left</th><th className="text-right">Waiver #</th><th className="text-right">Moves</th></tr>
               </thead>
               <tbody>
                 {rosters.data.rosters.map((r, i) => (
@@ -77,14 +77,11 @@ export default function League() {
                       <td className="num text-right">{league.waiver.type_code === 2 ? `$${r.faab_remaining}` : '—'}</td>
                       <td className="num text-right">{r.waiver_position ?? '—'}</td>
                       <td className="num text-right">{r.total_moves}</td>
-                      <td className="text-[11px] text-stone-500">
-                        {r.starters.map((s) => s.player?.name.split(' ').slice(-1)[0] ?? '—').join(', ')}
-                      </td>
                     </tr>
                     {open === r.roster_id && (
                       <tr>
-                        <td colSpan={11} className="bg-stone-50 p-3">
-                          <RosterDetail r={r} week={week} rosEnd={league.ros_end_week} league={league} />
+                        <td colSpan={10} className="bg-stone-50 p-3">
+                          <RosterDetail r={r} week={week} rosEnd={league.ros_end_week} />
                         </td>
                       </tr>
                     )}

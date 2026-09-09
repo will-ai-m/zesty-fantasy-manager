@@ -116,7 +116,7 @@ function MyPlayersRow({ g, byTeam, leagues }: { g: Game; byTeam: Map<string, MyP
   )
 }
 
-function GameRow({ g, today }: { g: Game; today: string | undefined }) {
+function GameRow({ g, today, weather }: { g: Game; today: string | undefined; weather: boolean }) {
   const isToday = !!today && g.date_et === today
   return (
     <tr className={`border-t border-stone-100 align-top ${isToday && g.state !== 'post' ? 'bg-sky-50/60' : ''}`}>
@@ -134,14 +134,14 @@ function GameRow({ g, today }: { g: Game; today: string | undefined }) {
         {g.total != null ? g.total.toFixed(1) : <span className="text-stone-300">no line</span>}
       </td>
       <td className="whitespace-nowrap py-1.5 pr-3 text-[11px] text-stone-500">{g.broadcast ?? ''}</td>
-      <td className="py-1.5 pr-3 text-[11px] text-stone-500">
+      {weather && <td className="py-1.5 pr-3 text-[11px] text-stone-500">
         {g.weather && (
           <span title={g.venue ?? undefined}>
             {g.weather.summary}
             {g.weather.temperature != null && ` · ${g.weather.temperature}°`}
           </span>
         )}
-      </td>
+      </td>}
     </tr>
   )
 }
@@ -175,6 +175,8 @@ export default function Games() {
   const games = (data?.games ?? []).filter((g) => !minesOnly || hasMine(g))
   const myGameCount = (data?.games ?? []).filter(hasMine).length
 
+  // ESPN only forecasts near-term games, so this column is dead space on any future week.
+  const hasWeather = (data?.games ?? []).some((g) => g.weather?.summary)
   const days: { label: string; today: boolean; games: Game[] }[] = []
   for (const g of games) {
     const label = dayLabel(g.kickoff)
@@ -243,20 +245,20 @@ export default function Games() {
                 </th>
                 <th className="px-0 py-1.5 pr-4 text-right font-semibold">Total</th>
                 <th className="py-1.5 pr-3 text-left font-semibold">TV</th>
-                <th className="py-1.5 pr-3 text-left font-semibold">Weather</th>
+                {hasWeather && <th className="py-1.5 pr-3 text-left font-semibold">Weather</th>}
               </tr>
             </thead>
             <tbody>
               {days.map((d) => (
                 <Fragment key={d.label}>
                   <tr className={`border-t border-stone-200 ${d.today ? 'bg-sky-100' : 'bg-stone-50'}`}>
-                    <td colSpan={5} className={`px-3 py-1 text-[11px] font-semibold ${d.today ? 'text-sky-900' : 'text-stone-600'}`}>
+                    <td colSpan={hasWeather ? 5 : 4} className={`px-3 py-1 text-[11px] font-semibold ${d.today ? 'text-sky-900' : 'text-stone-600'}`}>
                       {d.label}{d.today && ' · today'}
                     </td>
                   </tr>
                   {d.games.map((g) => (
                     <Fragment key={g.game_id}>
-                      <GameRow g={g} today={data.today} />
+                      <GameRow g={g} today={data.today} weather={hasWeather} />
                       <MyPlayersRow g={g} byTeam={byTeam} leagues={mine.data?.leagues ?? []} />
                     </Fragment>
                   ))}

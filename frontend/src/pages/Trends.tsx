@@ -22,17 +22,11 @@ export default function Trends() {
   const columns = useMemo<Column<TrendPlayer>[]>(() => {
     const countKey = `${kind}_${win}` as const
     const cols: Column<TrendPlayer>[] = [
-      { key: 'rank', header: '#', render: (p) => <span className="text-stone-400">{rows.indexOf(p) + 1}</span>, align: 'right' },
       { key: 'name', header: 'Player', render: (p) => <PlayerCell p={p} />, sort: (p) => p.name },
       { key: 'pos', header: 'Pos', render: (p) => <Pos pos={p.position} />, sort: (p) => POS_ORDER.indexOf(p.position), align: 'center' },
       { key: 'opp', header: `Wk ${week}`, render: (p) => (p.on_bye ? 'BYE' : p.opponent ?? '—'), sort: (p) => p.opponent },
       { key: 'count', header: kind === 'adds' ? `Adds ${win}` : `Drops ${win}`, render: (p) => <span className={`font-semibold ${kind === 'adds' ? 'text-emerald-700' : 'text-red-700'}`}>{fmtInt(p[countKey])}</span>, sort: (p) => p[countKey], align: 'right', desc: true },
-      { key: 'other', header: win === '24h' ? '7d' : '24h', render: (p) => <span className="text-stone-500">{fmtInt(p[`${kind}_${win === '24h' ? '7d' : '24h'}` as const])}</span>, sort: (p) => p[`${kind}_${win === '24h' ? '7d' : '24h'}` as const], align: 'right', desc: true },
-      { key: 'opp_count', header: kind === 'adds' ? `Drops ${win}` : `Adds ${win}`, render: (p) => <span className="text-stone-500">{fmtInt(p[`${kind === 'adds' ? 'drops' : 'adds'}_${win}` as const])}</span>, sort: (p) => p[`${kind === 'adds' ? 'drops' : 'adds'}_${win}` as const], align: 'right', desc: true },
       { key: 'owned', header: 'Own%', render: (p) => pct(p.owned), sort: (p) => p.owned, align: 'right', desc: true },
-      { key: 'started', header: 'Start%', render: (p) => pct(p.started), sort: (p) => p.started, align: 'right', desc: true },
-      { key: 'depth', header: 'Dep', render: (p) => <span className="text-stone-600">{p.depth_chart_position ? `${p.depth_chart_position}${p.depth_chart_order ?? ''}` : '—'}</span>, sort: (p) => p.depth_chart_order, align: 'center' },
-      { key: 'prev', header: "'25 PPG", render: (p) => <span className="text-stone-600">{fmt(p.prev_season_ppg)}</span>, sort: (p) => p.prev_season_ppg, align: 'right', desc: true },
     ]
     for (const lg of data?.leagues ?? []) {
       cols.push({

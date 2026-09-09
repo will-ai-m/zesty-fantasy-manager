@@ -12,7 +12,13 @@ const ecrNum = (posRank: string | null | undefined): number =>
 
 const POS_FILTERS = ['ALL', 'QB', 'RB', 'WR', 'TE', 'FLEX', 'K', 'DEF']
 
-export function playerColumns(opts: { week: number; rosEnd: number; onPlan?: (p: Player) => void; showRank?: boolean; vsMine?: boolean; espn?: boolean; fp?: boolean; fpWaiver?: boolean }): Column<Player>[] {
+/** Shared column set for the two player tables, which ask different questions.
+ * `waiver` is "should I pick this up" — ownership and add velocity matter.
+ * `lineup` is "should I start this" — they are already mine, so the market says nothing.
+ * Backward-looking scoring (last week, PPG, last season) lives in the player drawer, which
+ * carries the full per-week game log for both seasons. */
+export function playerColumns(opts: { week: number; rosEnd: number; onPlan?: (p: Player) => void; showRank?: boolean; vsMine?: boolean; espn?: boolean; fp?: boolean; fpWaiver?: boolean; variant?: 'waiver' | 'lineup' }): Column<Player>[] {
+  const market = (opts.variant ?? 'waiver') === 'waiver'
   const cols: Column<Player>[] = [
     {
       key: 'name', header: 'Player',
@@ -33,8 +39,13 @@ export function playerColumns(opts: { week: number; rosEnd: number; onPlan?: (p:
     { key: 'opp', header: `Wk ${opts.week} opp`, title: 'Opponent this week', render: (p) => <span className={p.on_bye ? 'text-stone-400' : ''}>{p.on_bye ? 'BYE' : p.opponent ?? '—'}</span>, sort: (p) => p.opponent },
     { key: 'bye', header: 'Bye', render: (p) => <span className={p.bye_week === opts.week ? 'font-semibold text-red-700' : 'text-stone-500'}>{p.bye_week ?? '—'}</span>, sort: (p) => p.bye_week, align: 'center' },
     { key: 'depth', header: 'Dep', title: 'Depth chart order at position', render: (p) => <span className="text-stone-600">{p.depth_chart_position ? `${p.depth_chart_position}${p.depth_chart_order ?? ''}` : '—'}</span>, sort: (p) => p.depth_chart_order, align: 'center' },
-    { key: 'owned', header: 'Own%', title: 'Percent of Sleeper leagues where rostered', render: (p) => pct(p.owned), sort: (p) => p.owned, align: 'right', desc: true },
-    { key: 'started', header: 'Start%', title: 'Percent of Sleeper leagues where started', render: (p) => pct(p.started), sort: (p) => p.started, align: 'right', desc: true },
+    ...(market ? [{
+      key: 'owned', header: 'Own%', title: 'Percent of Sleeper leagues where this player is rostered, and where they are started',
+      render: (p: Player) => (
+        <span>{pct(p.owned)}<span className="ml-1 text-[10px] text-stone-400">{pct(p.started)}</span></span>
+      ),
+      sort: (p: Player) => p.owned, align: 'right' as const, desc: true,
+    }] : []),
     ...(opts.fpWaiver ? [
       {
         key: 'fp_waiver', header: 'FP wvr', title: 'Rank on the FantasyPros waiver-wire list (4 experts, ~50 players). Blank means they did not make the list.',
@@ -57,9 +68,11 @@ export function playerColumns(opts: { week: number; rosEnd: number; onPlan?: (p:
       { key: 'owned_change', header: 'Own Δ', title: 'ESPN ownership change (percentage points)', render: (p: Player) => p.owned_change == null ? <span className="text-stone-400">·</span> : <span className={p.owned_change > 0 ? 'text-emerald-700' : p.owned_change < 0 ? 'text-red-700' : 'text-stone-400'}>{p.owned_change > 0 ? '+' : ''}{fmt(p.owned_change)}</span>, sort: (p: Player) => p.owned_change, align: 'right' as const, desc: true },
       { key: 'platform_status', header: 'Avail', title: 'ESPN availability: free agent, or on waivers until the shown time', render: (p: Player) => p.platform_status === 'WAIVERS' ? <span className="text-amber-700" title={p.waiver_until ? `On waivers until ${shortDate(p.waiver_until)}` : 'On waivers'}>Waivers{p.waiver_until ? ` · ${shortDate(p.waiver_until)}` : ''}</span> : p.platform_status === 'FREEAGENT' ? <span className="text-emerald-700">FA</span> : <span className="text-stone-400">—</span>, sort: (p: Player) => p.platform_status === 'FREEAGENT' ? 0 : p.platform_status === 'WAIVERS' ? 1 : 2 },
     ] : []),
-    { key: 'adds_24h', header: '+24h', title: 'Adds across Sleeper, last 24h', render: (p) => <span className={p.adds_24h > 0 ? 'text-emerald-700 font-medium' : 'text-stone-400'}>{p.adds_24h ? fmtInt(p.adds_24h) : '·'}</span>, sort: (p) => p.adds_24h, align: 'right', desc: true },
-    { key: 'adds_7d', header: '+7d', title: 'Adds across Sleeper, last 7 days', render: (p) => <span className={p.adds_7d > 0 ? 'text-emerald-700' : 'text-stone-400'}>{p.adds_7d ? fmtInt(p.adds_7d) : '·'}</span>, sort: (p) => p.adds_7d, align: 'right', desc: true },
-    { key: 'drops_24h', header: '−24h', title: 'Drops across Sleeper, last 24h', render: (p) => <span className={p.drops_24h > 0 ? 'text-red-700' : 'text-stone-400'}>{p.drops_24h ? fmtInt(p.drops_24h) : '·'}</span>, sort: (p) => p.drops_24h, align: 'right', desc: true },
+    ...(market ? [{
+      key: 'adds_24h', header: '+24h', title: 'Adds across Sleeper, last 24h. Longer windows and drops live on the Trends page.',
+      render: (p: Player) => <span className={p.adds_24h > 0 ? 'text-emerald-700 font-medium' : 'text-stone-400'}>{p.adds_24h ? fmtInt(p.adds_24h) : '·'}</span>,
+      sort: (p: Player) => p.adds_24h, align: 'right' as const, desc: true,
+    }] : []),
     {
       key: 'proj_week', header: `Wk ${opts.week} proj`, title: opts.espn ? "ESPN's projection for this week under this league's scoring" : 'Projected points this week (league scoring)',
       render: (p) => <span>{fmt(p.proj_week)}{opts.showRank && p.proj_week_rank ? <span className="ml-1 text-[10px] text-stone-400">{p.proj_week_rank}</span> : null}</span>,
@@ -71,9 +84,6 @@ export function playerColumns(opts: { week: number; rosEnd: number; onPlan?: (p:
       render: (p) => <span className="font-medium">{fmt(p.proj_ros, 0)}{opts.showRank && p.proj_ros_rank ? <span className="ml-1 text-[10px] text-stone-400">{p.proj_ros_rank}</span> : null}</span>,
       sort: (p) => p.proj_ros, align: 'right', desc: true,
     },
-    { key: 'last', header: 'Last', title: 'Points last week', render: (p) => fmt(p.last_week_pts), sort: (p) => p.last_week_pts, align: 'right', desc: true },
-    { key: 'ppg', header: 'PPG', title: 'Points per game this season', render: (p) => <span>{fmt(p.season_ppg)}{p.season_gp ? <span className="ml-1 text-[10px] text-stone-400">{p.season_gp}g</span> : null}</span>, sort: (p) => p.season_ppg, align: 'right', desc: true },
-    { key: 'prev', header: "'25 PPG", title: 'Points per game last season (league scoring)', render: (p) => <span className="text-stone-600">{fmt(p.prev_season_ppg)}{p.prev_season_gp ? <span className="ml-1 text-[10px] text-stone-400">{p.prev_season_gp}g</span> : null}</span>, sort: (p) => p.prev_season_ppg, align: 'right', desc: true },
   ]
   if (opts.vsMine) {
     cols.push({
@@ -142,7 +152,6 @@ export default function Waivers() {
         </h1>
         <div className="flex items-center gap-1.5 text-[12px] text-stone-600">
           <Chip tone="amber">{league.waiver.type}{league.waiver.type_code === 2 && t ? ` · $${t.faab_remaining} of $${league.waiver.budget} left` : ''}</Chip>
-          {t?.waiver_position != null && <Chip>Waiver #{t.waiver_position}</Chip>}
           {league.waiver.daily ? <Chip title={league.waiver.days?.join(', ')}>Runs daily{league.waiver.hour != null ? ` · ${league.waiver.hour}:00` : ''}{league.waiver.clear_days ? ` · ${league.waiver.clear_days}d clear` : ''}</Chip>
             : league.waiver.day_of_week && <Chip>Runs {league.waiver.day_of_week}{league.waiver.clear_days ? ` · ${league.waiver.clear_days}d clear` : ''}</Chip>}
           {league.waiver.bid_min > 0 && <Chip>Min bid ${league.waiver.bid_min}</Chip>}
