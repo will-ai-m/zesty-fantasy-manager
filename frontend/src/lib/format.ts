@@ -51,7 +51,12 @@ export const injuryShort = (s: string | null | undefined): string => {
   }
 }
 
-export const OUT_STATUSES = new Set(['Out', 'IR', 'PUP', 'Sus', 'COV', 'NA', 'DNR'])
+// Statuses the waiver page's "Hide Out / IR" filter drops. Deliberately narrower than the
+// backend's OUT_STATUSES, which also includes Sleeper's "NA" (not on the active roster) because
+// that does rule a player out of a lineup this week. On the waiver wire "NA" is week-to-week —
+// a player can carry it and still have the board's best rest-of-season projection — so it stays
+// visible here and shows up as a red badge instead.
+export const OUT_STATUSES = new Set(['Out', 'IR', 'PUP', 'Sus', 'COV', 'DNR'])
 
 export const platformLabel: Record<string, string> = { sleeper: 'Sleeper', espn: 'ESPN', yahoo: 'Yahoo' }
 export const platformClass: Record<string, string> = {
