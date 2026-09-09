@@ -36,6 +36,13 @@ const OVERRIDES: Record<string, string> = {
   'sleeper:1393027888856465408': 'bg-[#AA0000]',
   // Time Tracking FFB 26-27 — sky blue.
   'espn:1280588303': 'bg-sky-500',
+  // WDAY BROCKSTARS — lime, at 700 rather than 500. Hue is chosen for separation from the two
+  // above (worst-case CIE Lab distance 93, against the 120 between red and sky) but the shade
+  // is chosen for contrast: a bar also sits on the amber-100 selected-league row, where
+  // lime-500 managed only 1.8:1 and effectively vanished. lime-700 gets 4.5:1 there and
+  // 5.0:1 on white. Still yellow-leaning (hue 124) so it reads as a league, not as the
+  // emerald used for gains.
+  'sleeper:1389709228628791296': 'bg-lime-700',
 }
 
 const KEY = 'leagueColors'
