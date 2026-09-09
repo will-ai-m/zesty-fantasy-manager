@@ -126,7 +126,7 @@ function AllMyPlayers() {
   if (isLoading) return <Spinner label="Loading players across leagues…" />
   if (error) return <ErrorBox error={error} />
   if (!data) return null
-  return <DataTable rows={data.players} columns={columns} rowKey={(p) => p.player_id} initialSort={{ key: 'ros', dir: 'desc' }} />
+  return <DataTable rows={data.players} columns={columns} rowKey={(p) => p.player_id} initialSort={{ key: 'owned', dir: 'desc' }} />
 }
 
 export default function Roster() {

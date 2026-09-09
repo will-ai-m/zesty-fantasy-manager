@@ -117,7 +117,7 @@ export default function Waivers() {
 
       {isLoading && <Spinner label="Building the waiver wire (projections, ownership, trends)…" />}
       {error && <ErrorBox error={error} />}
-      {data && <DataTable rows={rows} columns={columns} rowKey={(p) => p.player_id} initialSort={{ key: 'vs_mine', dir: 'desc' }} />}
+      {data && <DataTable rows={rows} columns={columns} rowKey={(p) => p.player_id} initialSort={{ key: 'owned', dir: 'desc' }} />}
     </div>
   )
 }

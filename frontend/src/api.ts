@@ -218,6 +218,42 @@ const q = (params: Record<string, string | number | undefined | null>) => {
   return s ? `?${s}` : ''
 }
 
+export interface Game {
+  game_id: string
+  kickoff: string | null
+  state: 'pre' | 'in' | 'post' | null
+  status_detail: string | null
+  away: string | null
+  home: string | null
+  away_name: string | null
+  home_name: string | null
+  away_record: string | null
+  home_record: string | null
+  away_score: number | null
+  home_score: number | null
+  /** Home team's line: negative = home favored. */
+  spread: number | null
+  favorite: string | null
+  total: number | null
+  away_moneyline: number | null
+  home_moneyline: number | null
+  away_implied: number | null
+  home_implied: number | null
+  odds_provider: string | null
+  odds_source: 'espn' | 'nflverse' | null
+  venue: string | null
+  broadcast: string | null
+  weather: { summary: string | null; temperature: number | null } | null
+}
+
+export interface GamesResponse {
+  season: number
+  week: number
+  source: string
+  priced: number
+  games: Game[]
+}
+
 export const api = {
   me: () => http<Me>('/api/me'),
   waivers: (leagueId: string, week?: number) => http<WaiversResponse>(`/api/leagues/${leagueId}/waivers${q({ week })}`),
@@ -225,6 +261,7 @@ export const api = {
   rosters: (leagueId: string, week?: number) => http<RostersResponse>(`/api/leagues/${leagueId}/rosters${q({ week })}`),
   transactions: (leagueId: string, weeks = 3) => http<TransactionsResponse>(`/api/leagues/${leagueId}/transactions${q({ weeks })}`),
   trends: () => http<TrendsResponse>('/api/trends'),
+  games: (week?: number) => http<GamesResponse>(`/api/games${q({ week })}`),
   myPlayers: (week?: number) => http<MyPlayersResponse>(`/api/my-players${q({ week })}`),
   player: (playerId: string, leagueId?: string | null) => http<PlayerDetail>(`/api/players/${playerId}${q({ league_id: leagueId })}`),
   plans: () => http<Plan[]>('/api/plans'),

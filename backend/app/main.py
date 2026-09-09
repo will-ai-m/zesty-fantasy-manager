@@ -10,6 +10,7 @@ from fastapi.responses import JSONResponse
 from .cache import Cache
 from .config import DATA_DIR, ESPN_LEAGUE_IDS, ESPN_S2, ESPN_SWID, ConfigError
 from .espn import Espn
+from .odds import Odds
 from .plans import PlanIn, PlanPatch, PlanStore
 from .services import Service
 from .sleeper import Sleeper
@@ -24,8 +25,10 @@ async def lifespan(app: FastAPI):
     espn = Espn(cache, ESPN_S2, ESPN_SWID) if ESPN_LEAGUE_IDS else None
     app.state.espn = espn
     app.state.service = Service(sleeper, espn)
+    app.state.odds = Odds(cache)
     app.state.plans = PlanStore(DATA_DIR / "plans.json")
     yield
+    await app.state.odds.aclose()
     await sleeper.aclose()
     if espn:
         await espn.aclose()
@@ -82,6 +85,19 @@ async def rosters(league_id: str, week: int | None = Query(default=None, ge=1, l
 @app.get("/api/leagues/{league_id}/transactions")
 async def transactions(league_id: str, weeks: int = Query(default=3, ge=1, le=18)):
     return await svc().transactions(league_id, weeks)
+
+
+@app.get("/api/games")
+async def games(
+    week: int | None = Query(default=None, ge=1, le=18),
+    season: int | None = Query(default=None, ge=2020, le=2100),
+):
+    """NFL games for a week, chronological, with Vegas lines and implied team totals."""
+    st = await svc().state()
+    return await app.state.odds.week(
+        season if season is not None else int(st["season"]),
+        week if week is not None else int(st["current_week"]),
+    )
 
 
 @app.get("/api/trends")
