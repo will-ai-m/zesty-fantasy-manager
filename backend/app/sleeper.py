@@ -109,11 +109,14 @@ class Sleeper:
         )
 
     async def research(self, season: str, week: int) -> dict[str, dict]:
-        """Sleeper-wide % rostered / % started: {player_id: {owned, started}}."""
-        return await self.cache.get(
-            f"research:{season}:{week}", 10 * MIN,
-            lambda: self._get(f"/players/{SPORT}/research/regular/{season}/{week}"),
-        )
+        """Sleeper-wide % rostered / % started: {player_id: {owned, started}}.
+
+        Sleeper only publishes this for the current and next week and answers a bare `null`
+        beyond that, so future weeks come back empty rather than None — callers index into
+        this directly."""
+        async def loader() -> dict[str, dict]:
+            return await self._get(f"/players/{SPORT}/research/regular/{season}/{week}") or {}
+        return await self.cache.get(f"research:{season}:{week}", 10 * MIN, loader)
 
     async def schedule(self, season: str, season_type: str = "regular") -> list[dict]:
         return await self.cache.get(
