@@ -1,6 +1,6 @@
-"""Player identity across platforms. Sleeper's player_id is the canonical id; ESPN (and later Yahoo)
-ids are mapped onto it using, in order: Sleeper's own cross-ids, the nflverse/DynastyProcess
-crosswalk, and finally a normalized name + position match."""
+"""Player identity across platforms. Sleeper's player_id is the canonical id; ESPN, FantasyPros
+(and later Yahoo) ids are mapped onto it using, in order: Sleeper's own cross-ids, the
+nflverse/DynastyProcess crosswalk, and finally a normalized name + position match."""
 from __future__ import annotations
 
 import csv
@@ -18,6 +18,8 @@ DAY = 86400
 
 # ESPN abbreviations that differ from Sleeper's.
 ESPN_TEAM_ALIASES = {"WSH": "WAS"}
+# FantasyPros abbreviations that differ from Sleeper's. "FA" means no team.
+FP_TEAM_ALIASES = {"JAC": "JAX"}
 
 
 def normalize_name(name: str) -> str:
@@ -34,9 +36,14 @@ async def load_nflverse_ids(cache: Cache) -> list[dict]:
         rows = []
         for row in csv.DictReader(io.StringIO(r.text)):
             if row.get("sleeper_id"):
-                rows.append({k: row.get(k) or None for k in ("sleeper_id", "espn_id", "yahoo_id", "name", "position")})
+                rows.append({
+                    k: row.get(k) or None
+                    for k in ("sleeper_id", "espn_id", "yahoo_id", "fantasypros_id", "name", "position")
+                })
         return rows
-    return await cache.get("nflverse_ids", DAY, loader, disk=True)
+    # Keyed _v2 because v1 cached rows predate fantasypros_id; a stale v1 file would
+    # silently drop every FantasyPros match.
+    return await cache.get("nflverse_ids_v2", DAY, loader, disk=True)
 
 
 class Crosswalk:
@@ -44,6 +51,9 @@ class Crosswalk:
         self.players = sleeper_players
         self.espn: dict[int, str] = {}
         self.yahoo: dict[int, str] = {}
+        # Sleeper's players file carries espn_id/yahoo_id but no FantasyPros id, so this
+        # table is filled from the nflverse crosswalk alone.
+        self.fantasypros: dict[int, str] = {}
         self.by_name: dict[tuple[str, str], list[str]] = defaultdict(list)
         for pid, p in sleeper_players.items():
             for key, table in (("espn_id", self.espn), ("yahoo_id", self.yahoo)):
@@ -60,7 +70,7 @@ class Crosswalk:
             sid = row.get("sleeper_id")
             if not sid or sid not in sleeper_players:
                 continue
-            for key, table in (("espn_id", self.espn), ("yahoo_id", self.yahoo)):
+            for key, table in (("espn_id", self.espn), ("yahoo_id", self.yahoo), ("fantasypros_id", self.fantasypros)):
                 v = row.get(key)
                 if v:
                     try:
@@ -87,6 +97,22 @@ class Crosswalk:
         pid = self.yahoo.get(yahoo_id)
         if pid:
             return pid
+        if name and position:
+            cands = self.by_name.get((normalize_name(name), position), [])
+            if len(cands) == 1:
+                return cands[0]
+        return None
+
+    def from_fantasypros(self, fp_id: int | None, name: str | None, position: str | None, team: str | None) -> str | None:
+        """FantasyPros ranking row -> Sleeper player_id. `position` and `team` are expected in
+        Sleeper's vocabulary already (DEF, not DST; JAX, not JAC)."""
+        if position == "DEF":
+            # Sleeper keys team defences by team abbreviation; the crosswalk has no row for them.
+            return team if team in self.players else None
+        if fp_id is not None:
+            pid = self.fantasypros.get(fp_id)
+            if pid:
+                return pid
         if name and position:
             cands = self.by_name.get((normalize_name(name), position), [])
             if len(cands) == 1:
