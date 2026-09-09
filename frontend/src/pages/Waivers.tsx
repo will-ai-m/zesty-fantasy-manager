@@ -6,17 +6,53 @@ import { useApp } from '../components/AppContext'
 import { Chip, ErrorBox, PlatformBadge, PlayerCell, Pos, Spinner } from '../components/Badges'
 import { DataTable, type Column } from '../components/DataTable'
 
+/** "WR24" -> 24, for sorting; unranked players sink to the bottom. */
+const ecrNum = (posRank: string | null | undefined): number =>
+  posRank ? Number(posRank.replace(/\D/g, '')) || 9999 : 9999
+
 const POS_FILTERS = ['ALL', 'QB', 'RB', 'WR', 'TE', 'FLEX', 'K', 'DEF']
 
-export function playerColumns(opts: { week: number; rosEnd: number; onPlan?: (p: Player) => void; showRank?: boolean; vsMine?: boolean; espn?: boolean }): Column<Player>[] {
+export function playerColumns(opts: { week: number; rosEnd: number; onPlan?: (p: Player) => void; showRank?: boolean; vsMine?: boolean; espn?: boolean; fp?: boolean; fpWaiver?: boolean }): Column<Player>[] {
   const cols: Column<Player>[] = [
-    { key: 'name', header: 'Player', render: (p) => <PlayerCell p={p} />, sort: (p) => p.name },
+    {
+      key: 'name', header: 'Player',
+      render: (p) => (
+        <span className="inline-flex items-center gap-1.5">
+          <PlayerCell p={p} />
+          {opts.fpWaiver && p.fp_waiver_rank != null && (
+            <span
+              title={`FantasyPros waiver wire #${p.fp_waiver_rank}${p.fp_waiver_pos_rank ? ` (${p.fp_waiver_pos_rank})` : ''} — a shortlist of ~50 pickups`}
+              className="rounded bg-violet-100 px-1 py-0.5 text-[9.5px] font-bold leading-none text-violet-800"
+            >FP</span>
+          )}
+        </span>
+      ),
+      sort: (p) => p.name,
+    },
     { key: 'pos', header: 'Pos', render: (p) => <Pos pos={p.position} />, sort: (p) => POS_ORDER.indexOf(p.position), align: 'center' },
     { key: 'opp', header: `Wk ${opts.week} opp`, title: 'Opponent this week', render: (p) => <span className={p.on_bye ? 'text-stone-400' : ''}>{p.on_bye ? 'BYE' : p.opponent ?? '—'}</span>, sort: (p) => p.opponent },
     { key: 'bye', header: 'Bye', render: (p) => <span className={p.bye_week === opts.week ? 'font-semibold text-red-700' : 'text-stone-500'}>{p.bye_week ?? '—'}</span>, sort: (p) => p.bye_week, align: 'center' },
     { key: 'depth', header: 'Dep', title: 'Depth chart order at position', render: (p) => <span className="text-stone-600">{p.depth_chart_position ? `${p.depth_chart_position}${p.depth_chart_order ?? ''}` : '—'}</span>, sort: (p) => p.depth_chart_order, align: 'center' },
     { key: 'owned', header: 'Own%', title: 'Percent of Sleeper leagues where rostered', render: (p) => pct(p.owned), sort: (p) => p.owned, align: 'right', desc: true },
     { key: 'started', header: 'Start%', title: 'Percent of Sleeper leagues where started', render: (p) => pct(p.started), sort: (p) => p.started, align: 'right', desc: true },
+    ...(opts.fpWaiver ? [
+      {
+        key: 'fp_waiver', header: 'FP wvr', title: 'Rank on the FantasyPros waiver-wire list (4 experts, ~50 players). Blank means they did not make the list.',
+        render: (p: Player) => p.fp_waiver_rank == null
+          ? <span className="text-stone-300">·</span>
+          : <span className="font-semibold text-violet-800">{p.fp_waiver_rank}<span className="ml-1 text-[10px] font-normal text-violet-500">{p.fp_waiver_pos_rank}</span></span>,
+        sort: (p: Player) => p.fp_waiver_rank ?? 9999, align: 'right' as const,
+      },
+    ] : []),
+    ...(opts.fp ? [
+      {
+        key: 'fp_ecr', header: 'ECR', title: 'FantasyPros weekly expert consensus rank within position (~80 experts). The number after it is how much the experts disagree — bigger means less consensus.',
+        render: (p: Player) => !p.fp_pos_rank
+          ? <span className="text-stone-300">·</span>
+          : <span>{p.fp_pos_rank}{p.fp_rank_std != null && <span className="ml-1 text-[10px] text-stone-400">±{fmt(p.fp_rank_std, 0)}</span>}</span>,
+        sort: (p: Player) => ecrNum(p.fp_pos_rank), align: 'right' as const,
+      },
+    ] : []),
     ...(opts.espn ? [
       { key: 'owned_change', header: 'Own Δ', title: 'ESPN ownership change (percentage points)', render: (p: Player) => p.owned_change == null ? <span className="text-stone-400">·</span> : <span className={p.owned_change > 0 ? 'text-emerald-700' : p.owned_change < 0 ? 'text-red-700' : 'text-stone-400'}>{p.owned_change > 0 ? '+' : ''}{fmt(p.owned_change)}</span>, sort: (p: Player) => p.owned_change, align: 'right' as const, desc: true },
       { key: 'platform_status', header: 'Avail', title: 'ESPN availability: free agent, or on waivers until the shown time', render: (p: Player) => p.platform_status === 'WAIVERS' ? <span className="text-amber-700" title={p.waiver_until ? `On waivers until ${shortDate(p.waiver_until)}` : 'On waivers'}>Waivers{p.waiver_until ? ` · ${shortDate(p.waiver_until)}` : ''}</span> : p.platform_status === 'FREEAGENT' ? <span className="text-emerald-700">FA</span> : <span className="text-stone-400">—</span>, sort: (p: Player) => p.platform_status === 'FREEAGENT' ? 0 : p.platform_status === 'WAIVERS' ? 1 : 2 },
@@ -66,23 +102,31 @@ export default function Waivers() {
   })
   const [pos, setPos] = useState('ALL')
   const [search, setSearch] = useState('')
-  const [hideOut, setHideOut] = useState(true)
+  const [hideOut, setHideOut] = useState(false)
   const [relevantOnly, setRelevantOnly] = useState(true)
+  const [fpOnly, setFpOnly] = useState(false)
 
-  const rows = useMemo(() => {
-    const all = data?.players ?? []
+  const { rows, outCount, fpCount } = useMemo(() => {
     const s = search.trim().toLowerCase()
-    return all.filter((p) => {
+    const matched = (data?.players ?? []).filter((p) => {
       if (pos === 'FLEX' ? !['RB', 'WR', 'TE'].includes(p.position) : pos !== 'ALL' && p.position !== pos) return false
-      if (hideOut && OUT_STATUSES.has(p.injury_status ?? '')) return false
+      if (fpOnly && p.fp_waiver_rank == null) return false
       if (relevantOnly && !(p.owned >= 1 || p.adds_24h > 0 || (p.proj_week ?? 0) >= 2 || (p.proj_ros ?? 0) >= 20)) return false
       if (s && !(p.name.toLowerCase().includes(s) || (p.team ?? '').toLowerCase() === s)) return false
       return true
     })
-  }, [data, pos, search, hideOut, relevantOnly])
+    const isOut = (p: Player) => OUT_STATUSES.has(p.injury_status ?? '')
+    // outCount is reported whether or not the filter is on, so it always reads as "this many
+    // players the Out / IR toggle decides the fate of" rather than appearing only once they vanish.
+    return {
+      rows: hideOut ? matched.filter((p) => !isOut(p)) : matched,
+      outCount: matched.filter(isOut).length,
+      fpCount: (data?.players ?? []).filter((p) => p.fp_waiver_rank != null).length,
+    }
+  }, [data, pos, search, hideOut, relevantOnly, fpOnly])
 
   const columns = useMemo(() => playerColumns({
-    week, rosEnd: data?.ros_end_week ?? 17, showRank: true, vsMine: true, espn: league?.platform === 'espn',
+    week, rosEnd: data?.ros_end_week ?? 17, showRank: true, vsMine: true, espn: league?.platform === 'espn', fp: true, fpWaiver: true,
     onPlan: (p) => leagueId && openPlan({ leagueId, add: p }),
   }), [week, data?.ros_end_week, leagueId, openPlan, league?.platform])
 
@@ -111,8 +155,9 @@ export default function Waivers() {
           ))}
         </div>
         <input value={search} onChange={(e) => setSearch(e.target.value)} placeholder="Search name or team…" className="w-56 rounded-md border border-stone-200 bg-white px-2.5 py-1 text-[12px]" />
-        <label className="flex items-center gap-1.5 text-[12px] text-stone-700"><input type="checkbox" checked={hideOut} onChange={(e) => setHideOut(e.target.checked)} /> Hide Out / IR</label>
+        <label className="flex items-center gap-1.5 text-[12px] text-stone-700"><input type="checkbox" checked={hideOut} onChange={(e) => setHideOut(e.target.checked)} /> Hide Out / IR{outCount > 0 && <span className={hideOut ? 'text-amber-700' : 'text-stone-400'}>({hideOut ? `${outCount} hidden` : outCount})</span>}</label>
         <label className="flex items-center gap-1.5 text-[12px] text-stone-700" title="Hide players nobody rosters, adds, or projects"><input type="checkbox" checked={relevantOnly} onChange={(e) => setRelevantOnly(e.target.checked)} /> Relevant only</label>
+        <label className="flex items-center gap-1.5 text-[12px] text-stone-700" title="Only players on the FantasyPros waiver-wire list"><input type="checkbox" checked={fpOnly} onChange={(e) => setFpOnly(e.target.checked)} /> <span className="rounded bg-violet-100 px-1 py-0.5 text-[9.5px] font-bold leading-none text-violet-800">FP</span> picks{fpCount > 0 && <span className="text-stone-400">({fpCount})</span>}</label>
       </div>
 
       {isLoading && <Spinner label="Building the waiver wire (projections, ownership, trends)…" />}

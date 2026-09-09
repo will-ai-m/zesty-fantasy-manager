@@ -263,3 +263,20 @@ if __name__ == "__main__":
         for e in result["errors"]:
             print(f"  {e}", file=sys.stderr)
         sys.exit(1)
+
+
+def indexes(data: dict | None) -> dict[str, dict[str, dict]]:
+    """{set_name: {sleeper_id: row}} for all three sets."""
+    return {name: by_sleeper_id(data, name) for name in ("weekly", "ros", "waiver")}
+
+
+def experts(data: dict | None, set_name: str, position: str | None = None) -> int | None:
+    """Expert count behind a set. Weekly is per-position pages, so it varies (49 for K,
+    ~80 for skill positions); ros and waiver each have a single page."""
+    if not data:
+        return None
+    pages = ((data.get("sets") or {}).get(set_name) or {}).get("pages") or {}
+    if set_name == "weekly" and position:
+        page = pages.get({"DEF": "dst"}.get(position, position.lower()))
+        return page.get("experts") if page else None
+    return next((p.get("experts") for p in pages.values()), None)

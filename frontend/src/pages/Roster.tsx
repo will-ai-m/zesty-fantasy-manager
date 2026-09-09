@@ -10,7 +10,7 @@ import { playerColumns } from './Waivers'
 type SlotRow = { slot: string; player: Player | null; key: string }
 
 function slotColumns(week: number, rosEnd: number): Column<SlotRow>[] {
-  const base = playerColumns({ week, rosEnd }).filter((c) => !['adds_7d', 'drops_24h'].includes(c.key))
+  const base = playerColumns({ week, rosEnd, fp: true }).filter((c) => !['adds_7d', 'drops_24h'].includes(c.key))
   const wrapped: Column<SlotRow>[] = base.map((c) => ({
     ...c,
     render: (r) => (r.player ? c.render(r.player) : c.key === 'name' ? <span className="text-red-600">Empty</span> : null),
@@ -105,6 +105,11 @@ function AllMyPlayers() {
       { key: 'opp', header: `Wk ${week}`, render: (p) => (p.on_bye ? 'BYE' : p.opponent ?? '—'), sort: (p) => p.opponent },
       { key: 'bye', header: 'Bye', render: (p) => <span className="text-stone-500">{p.bye_week ?? '—'}</span>, sort: (p) => p.bye_week, align: 'center' },
       { key: 'owned', header: 'Own%', render: (p) => pct(p.owned), sort: (p) => p.owned, align: 'right', desc: true },
+      {
+        key: 'fp_ecr', header: 'ECR', title: 'FantasyPros weekly expert consensus rank within position (~80 experts)',
+        render: (p) => p.fp_pos_rank ? <span className="text-stone-700">{p.fp_pos_rank}</span> : <span className="text-stone-300">·</span>,
+        sort: (p) => Number((p.fp_pos_rank ?? '').replace(/\D/g, '')) || 9999, align: 'right',
+      },
       { key: 'drops', header: '−24h', title: 'Drops across Sleeper, last 24h', render: (p) => <span className={p.drops_24h ? 'text-red-700' : 'text-stone-400'}>{p.drops_24h || '·'}</span>, sort: (p) => p.drops_24h, align: 'right', desc: true },
       { key: 'ros', header: 'ROS', render: (p) => <span className="font-medium">{fmt(p.proj_ros, 0)}</span>, sort: (p) => p.proj_ros, align: 'right', desc: true },
       { key: 'n', header: 'Leagues', render: (p) => p.leagues.length, sort: (p) => p.leagues.length, align: 'center', desc: true },

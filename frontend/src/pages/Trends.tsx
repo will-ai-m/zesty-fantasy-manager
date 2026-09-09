@@ -89,7 +89,7 @@ export default function Trends() {
       </div>
       {isLoading && <Spinner label="Loading trends across your leagues…" />}
       {error && <ErrorBox error={error} />}
-      {data && <DataTable rows={rows} columns={columns} rowKey={(p) => p.player_id} initialSort={{ key: 'owned', dir: 'desc' }} />}
+      {data && <DataTable rows={rows} columns={columns} rowKey={(p) => p.player_id} initialSort={{ key: 'count', dir: 'desc' }} />}
     </div>
   )
 }

@@ -1,8 +1,63 @@
 import { useQuery } from '@tanstack/react-query'
-import { api, type WeekRow } from '../api'
+import { api, type FpDetail, type FpSet, type WeekRow } from '../api'
 import { fmt } from '../lib/format'
 import { useApp } from './AppContext'
 import { ErrorBox, Injury, Pos, Spinner } from './Badges'
+
+const SET_LABEL: Record<string, { label: string; note: string }> = {
+  weekly: { label: 'This week', note: 'Rank within position' },
+  ros: { label: 'Rest of season', note: 'Overall rank' },
+  waiver: { label: 'Waiver wire', note: 'Rank on the pickup shortlist' },
+}
+
+function FpRow({ name, set }: { name: string; set: FpSet }) {
+  const meta = SET_LABEL[name]
+  // A wide min-max band means the experts disagree; on the 3-expert rest-of-season page
+  // that band is noisy enough that it is worth seeing next to the number.
+  const spread = set.rank_min != null && set.rank_max != null ? `${set.rank_min}–${set.rank_max}` : null
+  return (
+    <tr className="border-t border-stone-100">
+      <td className="py-1 pr-3 text-stone-600">{meta?.label ?? name}</td>
+      <td className="py-1 pr-3 font-semibold text-stone-900">{set.pos_rank ?? (set.rank_ecr != null ? `#${set.rank_ecr}` : '—')}</td>
+      <td className="num py-1 pr-3 text-right text-stone-600" title={meta?.note}>{set.rank_ecr ?? '—'}</td>
+      <td className="num py-1 pr-3 text-right text-stone-500">{spread ?? '—'}</td>
+      <td className="num py-1 pr-3 text-right text-stone-500">{set.rank_std != null ? fmt(set.rank_std) : '—'}</td>
+      <td className="num py-1 pr-3 text-right text-stone-500">{set.experts ?? '—'}</td>
+      <td className="num py-1 text-right text-stone-500">{set.owned_avg != null ? `${fmt(set.owned_avg, 0)}%` : '—'}</td>
+    </tr>
+  )
+}
+
+function FantasyPros({ fp }: { fp: FpDetail }) {
+  const order = ['weekly', 'ros', 'waiver'] as const
+  const rows = order.filter((k) => fp.sets[k])
+  return (
+    <section>
+      <h3 className="mb-2 text-[12px] font-semibold uppercase tracking-wide text-stone-500">
+        FantasyPros consensus <span className="font-normal normal-case tracking-normal text-stone-400">· {fp.scoring} PPR · scraped {fp.fetched_at_iso?.slice(0, 10)}</span>
+      </h3>
+      <table className="w-full text-[12px]">
+        <thead>
+          <tr className="text-[10.5px] uppercase tracking-wide text-stone-400">
+            <th className="py-1 pr-3 text-left font-semibold">Set</th>
+            <th className="py-1 pr-3 text-left font-semibold">Rank</th>
+            <th className="py-1 pr-3 text-right font-semibold" title="Expert consensus rank">ECR</th>
+            <th className="py-1 pr-3 text-right font-semibold" title="Best and worst rank any expert gave">Range</th>
+            <th className="py-1 pr-3 text-right font-semibold" title="Standard deviation — how much the experts disagree">±</th>
+            <th className="py-1 pr-3 text-right font-semibold" title="How many experts ranked this set">Exp</th>
+            <th className="py-1 text-right font-semibold" title="Percent rostered across ESPN and Yahoo">Own</th>
+          </tr>
+        </thead>
+        <tbody>{rows.map((k) => <FpRow key={k} name={k} set={fp.sets[k]!} />)}</tbody>
+      </table>
+      {fp.sets.ros && (fp.sets.ros.experts ?? 0) <= 5 && (
+        <p className="mt-1 text-[11px] text-stone-400">
+          Rest-of-season is only {fp.sets.ros.experts} experts — treat it as a hint, not a consensus.
+        </p>
+      )}
+    </section>
+  )
+}
 
 const STAT_COLS: Record<string, { key: string; label: string; digits?: number }[]> = {
   QB: [
@@ -96,6 +151,7 @@ export function PlayerDrawer() {
         {error && <ErrorBox error={error} />}
         {data && (
           <div className="space-y-6 p-4">
+            {data.fantasypros && <FantasyPros fp={data.fantasypros} />}
             <section>
               <h3 className="mb-2 text-[12px] font-semibold uppercase tracking-wide text-stone-500">{data.current_season[0]?.season ?? 'This season'} — projections and results</h3>
               <WeekTable rows={data.current_season} position={p?.position ?? 'WR'} showProj />

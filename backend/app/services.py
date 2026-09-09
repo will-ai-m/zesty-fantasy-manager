@@ -6,7 +6,8 @@ import asyncio
 import math
 from typing import Any
 
-from .config import ESPN_LEAGUE_IDS, ESPN_SWID, FANTASY_POSITIONS, OUT_STATUSES, require_username
+from .config import DATA_DIR, ESPN_LEAGUE_IDS, ESPN_SWID, FANTASY_POSITIONS, OUT_STATUSES, require_username
+from . import fantasypros as fp
 from .espn import Espn, normalize_league as espn_normalize_league, normalize_pool as espn_normalize_pool, \
     normalize_transactions as espn_normalize_transactions, stat_id as espn_stat_id
 from .ids import Crosswalk, load_nflverse_ids
@@ -36,8 +37,63 @@ class Service:
         self.s = sleeper
         self.espn = espn
         self._xw: tuple[int, Crosswalk] | None = None
+        self._fp_stamp: float | None = None
+        self._fp_cache: tuple[dict | None, dict[str, dict[str, dict]]] = (None, {})
 
     # ------------------------------------------------------------------ basics
+    def _fp(self) -> tuple[dict | None, dict[str, dict[str, dict]]]:
+        """FantasyPros rankings, reloaded when `update-fantasypros-data` rewrites the file."""
+        path = DATA_DIR / "cache" / fp.CACHE_FILE
+        stamp = path.stat().st_mtime if path.exists() else None
+        if stamp != self._fp_stamp:
+            data = fp.load()
+            self._fp_cache = (data, fp.indexes(data))
+            self._fp_stamp = stamp
+        return self._fp_cache
+
+    def _fp_fields(self, pid: str) -> dict:
+        """Compact FantasyPros fields for table rows. `fp_pos_rank` is the weekly
+        within-position ECR ("WR24"); `fp_waiver_rank` is the player's place on the
+        waiver-wire shortlist, which only ~50 players appear on at all."""
+        _, idx = self._fp()
+        weekly = (idx.get("weekly") or {}).get(pid) or {}
+        waiver = (idx.get("waiver") or {}).get(pid) or {}
+        ros_ = (idx.get("ros") or {}).get(pid) or {}
+        return {
+            "fp_pos_rank": weekly.get("pos_rank"),
+            "fp_rank_std": weekly.get("rank_std"),
+            "fp_waiver_rank": waiver.get("rank_ecr"),
+            "fp_waiver_pos_rank": waiver.get("pos_rank"),
+            "fp_ros_pos_rank": ros_.get("pos_rank"),
+        }
+
+    def _fp_detail(self, pid: str, position: str | None) -> dict | None:
+        """Everything we have on one player, for the drawer. Expert counts are carried per
+        set because they differ wildly — ~80 on the weekly pages, 3 on rest-of-season."""
+        data, idx = self._fp()
+        if not data:
+            return None
+        sets = {}
+        for name in ("weekly", "ros", "waiver"):
+            row = (idx.get(name) or {}).get(pid)
+            if not row:
+                continue
+            sets[name] = {
+                "rank_ecr": row.get("rank_ecr"),
+                "pos_rank": row.get("pos_rank"),
+                "rank_min": row.get("rank_min"),
+                "rank_max": row.get("rank_max"),
+                "rank_ave": row.get("rank_ave"),
+                "rank_std": row.get("rank_std"),
+                "tier": row.get("tier"),
+                "ecr_delta": row.get("ecr_delta"),
+                "owned_avg": row.get("owned_avg"),
+                "experts": fp.experts(data, name, position),
+            }
+        if not sets:
+            return None
+        return {"fetched_at_iso": data.get("fetched_at_iso"), "scoring": data.get("scoring"), "sets": sets}
+
     async def state(self) -> dict:
         st = await self.s.state()
         week = int(st.get("display_week") or st.get("week") or 1)
@@ -334,6 +390,7 @@ class Service:
             "bye_week": ctx["byes"].get(team) if team else None,
             "opponent": ctx["opp"].get(week, {}).get(team) if team else None,
             "on_bye": bool(team) and ctx["byes"].get(team) == week,
+            **self._fp_fields(pid),
         }
 
     def _enrich(self, ctx: dict, pid: str) -> dict | None:
@@ -737,6 +794,7 @@ class Service:
                        "depth_chart_position": p.get("depth_chart_position"), "depth_chart_order": p.get("depth_chart_order"),
                        "bye_week": byes.get(team) if team else None, "status": p.get("status")},
             "scoring_league_id": league_id,
+            "fantasypros": self._fp_detail(player_id, p.get("position")),
             "current_season": week_rows(proj, stats, season, True),
             "previous_season": week_rows({}, prev_stats, prev_season, False),
         }

@@ -1,5 +1,24 @@
 export type Injury = 'Questionable' | 'Doubtful' | 'Out' | 'IR' | 'PUP' | 'Sus' | 'COV' | 'NA' | 'DNR' | null
 
+export interface FpSet {
+  rank_ecr: number | null
+  pos_rank: string | null
+  rank_min: number | null
+  rank_max: number | null
+  rank_ave: number | null
+  rank_std: number | null
+  tier: number | null
+  ecr_delta: number | null
+  owned_avg: number | null
+  experts: number | null
+}
+
+export interface FpDetail {
+  fetched_at_iso: string
+  scoring: string
+  sets: { weekly?: FpSet; ros?: FpSet; waiver?: FpSet }
+}
+
 export interface Player {
   player_id: string
   name: string
@@ -42,6 +61,13 @@ export interface Player {
   season_ppg: number | null
   prev_season_ppg: number | null
   prev_season_gp: number
+  /** FantasyPros weekly ECR, within position, e.g. "WR24". */
+  fp_pos_rank?: string | null
+  fp_rank_std?: number | null
+  /** Place on the FantasyPros waiver-wire shortlist (~50 players league-wide). */
+  fp_waiver_rank?: number | null
+  fp_waiver_pos_rank?: string | null
+  fp_ros_pos_rank?: string | null
 }
 
 export type Platform = 'sleeper' | 'espn' | 'yahoo'
@@ -174,6 +200,7 @@ export interface WeekRow {
   stats: Record<string, number>
 }
 export interface PlayerDetail {
+  fantasypros: FpDetail | null
   player: {
     player_id: string; name: string; position: string | null; team: string | null; age: number | null; years_exp: number | null
     college: string | null; height: string | null; weight: string | null; number: number | null; injury_status: string | null
