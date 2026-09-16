@@ -14,6 +14,9 @@ function StreamTable({ pos, week, players, onPlan }: { pos: 'K' | 'DEF'; week: n
     )
   }
   const basisLabel = pos === 'DEF' ? 'Opp implied' : 'Team implied'
+  // FantasyPros publishes weekly K and D/ST ranks one week at a time, so the later weeks carry
+  // its rest-of-season rank instead. Labelled, because the two are not the same claim.
+  const fpBasis = players.find((s) => s.fp_basis)?.fp_basis ?? null
   return (
     <div className="overflow-hidden rounded-md border border-stone-200 bg-white">
       <div className="border-b border-stone-200 bg-stone-50 px-3 py-1.5 text-[11px] font-semibold text-stone-600">Week {week}</div>
@@ -23,7 +26,9 @@ function StreamTable({ pos, week, players, onPlan }: { pos: 'K' | 'DEF'; week: n
             <th className="px-3 py-1 text-left font-medium">{pos === 'DEF' ? 'Defense' : 'Kicker'}</th>
             <th className="px-2 py-1 text-left font-medium">Matchup</th>
             <th className="px-2 py-1 text-right font-medium" title={pos === 'DEF' ? "Points the opponent is projected to score — lower is a better streaming spot" : "Points this kicker's own offense is projected to score — higher is better"}>{basisLabel}</th>
-            <th className="px-2 py-1 text-right font-medium" title="FantasyPros' weekly expert rank for this position. Deliberately not mixed into the matchup number — the experts weigh the unit itself, the line only weighs who it is playing, and where they disagree is the thing worth looking at. Published one week at a time, so it is blank for later weeks.">FP</th>
+            <th className="px-2 py-1 text-right font-medium" title={`FantasyPros' expert rank for this position — ${fpBasis === 'ros' ? 'rest-of-season, since their weekly list only covers the current week' : 'this week'}. Deliberately not mixed into the matchup number: the experts weigh the unit itself, the line only weighs who it is playing, and where they disagree is the thing worth looking at.`}>
+              FP<span className="ml-0.5 font-normal text-stone-400">{fpBasis === 'ros' ? ' ROS' : ''}</span>
+            </th>
             <th className="px-2 py-1 text-right font-medium">Own%</th>
             <th className="w-8" />
           </tr>

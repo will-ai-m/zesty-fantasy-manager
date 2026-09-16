@@ -191,9 +191,11 @@ export interface Streamer extends Player {
   opp_implied: number | null
   stream_basis: number
   stream_score: number
-  /** FantasyPros' weekly rank for this position, shown beside the matchup rather than merged
-   * into it. Null for weeks FantasyPros has not published yet. */
+  /** FantasyPros' rank for this position, shown beside the matchup rather than merged into it.
+   * `fp_basis` says which ranking it is: 'week' for the week FantasyPros has published, 'ros'
+   * for the weeks after it, which fall back to the rest-of-season list. */
   fp_rank: number | null
+  fp_basis: 'week' | 'ros' | null
 }
 
 export interface StreamWeek { week: number; players: Streamer[] }

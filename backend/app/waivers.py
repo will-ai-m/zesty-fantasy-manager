@@ -19,11 +19,12 @@ week-to-week carryover, so the matchup carries most of the weight: a defence is 
 its opponent is projected to score little, and a kicker is good if his own offence is projected to
 score a lot, both read off Vegas implied totals.
 
-FantasyPros' weekly K and D/ST rankings sit in the next column rather than being folded into that
+FantasyPros' K and D/ST rankings sit in the next column rather than being folded into that
 number. The two disagree often — the experts weigh a defence's own quality, the line only weighs
 who it is playing — and which one to trust is a judgement worth making per player, not one to
-average away. Those rankings are published one week at a time, so they appear only for the week
-they cover; later weeks show the line alone rather than a stale rank.
+average away. The weekly rankings cover one week at a time, so the current week shows those and
+the weeks after it fall back to the rest-of-season ranking, which is a standing view of the unit
+rather than a stale copy of last week's matchup call. Each row records which of the two it is.
 """
 from __future__ import annotations
 
@@ -143,17 +144,19 @@ def _fp_rank(row: dict) -> int | None:
 
 
 def stream_candidates(rows: list[dict], position: str, week_odds: dict[str, dict], week: int,
-                      fp_week: int | None = None) -> list[dict]:
+                      fp_week: int | None = None, ros_ranks: dict[str, int] | None = None) -> list[dict]:
     """Rank available K or D/ST for one week on the matchup, carrying FantasyPros' rank alongside.
 
     A defence scores on its *opponent's* implied total (low is good); a kicker on his *own*
-    team's (high is good). FantasyPros' weekly rank is attached for comparison but kept out of the
+    team's (high is good). FantasyPros' rank is attached for comparison but kept out of the
     ordering — the two measure different things and where they disagree is worth seeing, not
-    averaging. It is attached only for the week FantasyPros actually ranked. Teams on bye, or with
-    no line posted yet, are dropped rather than ranked at zero — an unpriced game is unknown,
-    not bad.
+    averaging. The week FantasyPros has actually ranked gets its weekly rank; the weeks past it
+    get the rest-of-season rank instead, and `fp_basis` says which, because "3rd this week" and
+    "3rd the rest of the way" are not the same claim. Teams on bye, or with no line posted yet,
+    are dropped rather than ranked at zero — an unpriced game is unknown, not bad.
     """
     use_fp = fp_week is not None and week == fp_week
+    ros_ranks = ros_ranks or {}
     out = []
     for r in rows:
         team = r.get("team")
@@ -173,6 +176,10 @@ def stream_candidates(rows: list[dict], position: str, week_odds: dict[str, dict
         else:
             value = _clamp((float(own) - 10.0) / 20.0)
             basis = round(float(own), 1)
+        if use_fp:
+            fp_rank, fp_basis = _fp_rank(r), "week"
+        else:
+            fp_rank, fp_basis = ros_ranks.get(r["player_id"]), "ros"
         out.append({
             **r,
             "week": week,
@@ -180,7 +187,8 @@ def stream_candidates(rows: list[dict], position: str, week_odds: dict[str, dict
             "implied": round(float(own), 1),
             "opp_implied": round(float(opp_imp), 1) if opp_imp is not None else None,
             "stream_basis": basis,
-            "fp_rank": _fp_rank(r) if use_fp else None,
+            "fp_rank": fp_rank,
+            "fp_basis": fp_basis if fp_rank is not None else None,
             "stream_score": round(value, 3),
         })
     out.sort(key=lambda r: -r["stream_score"])

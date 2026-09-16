@@ -855,16 +855,22 @@ class Service:
 
         odds_weeks = [w for w in range(week, min(REGULAR_SEASON_WEEKS, week + 2) + 1)]
         odds_by_week = dict(zip(odds_weeks, await asyncio.gather(*(self._team_odds(season, w) for w in odds_weeks))))
-        # FantasyPros ranks K and D/ST one week at a time, so its ranks are attached only to the
-        # week it actually covers; the later weeks show the line alone.
+        # FantasyPros ranks K and D/ST one week at a time, so its weekly ranks are attached only
+        # to the week they cover. The weeks after that get its rest-of-season ranking for the
+        # position instead — a standing view of the unit, which is the right thing to read beside
+        # a line three weeks out, and honest about being a different measure (see `fp_basis`).
         pending = await self._pending_claims(b, week)
-        fp_data, _ = self._fp()
+        fp_data, fp_idx = self._fp()
         fp_week = ((fp_data or {}).get("sets", {}).get("weekly") or {}).get("week")
         streamers: dict[str, list[dict]] = {}
         for pos in ("DEF", "K"):
             avail = [r for r in free if r["position"] == pos]
+            ros_ranks = {pid: row["rank_ecr"]
+                         for pid, row in (fp_idx.get(fp.ROS_POSITION_SETS[pos]) or {}).items()
+                         if row.get("rank_ecr")}
             streamers[pos] = [
-                {"week": w, "players": wv.stream_candidates(avail, pos, odds_by_week.get(w) or {}, w, fp_week)[:10]}
+                {"week": w,
+                 "players": wv.stream_candidates(avail, pos, odds_by_week.get(w) or {}, w, fp_week, ros_ranks)[:10]}
                 for w in odds_weeks
             ]
 

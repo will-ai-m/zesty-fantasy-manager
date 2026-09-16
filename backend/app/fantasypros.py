@@ -60,6 +60,12 @@ class Page:
 
 # Weekly is per position: one page each, covering every rostered player.
 # ROS and waiver are single cross-position pages.
+#
+# `ros_k` and `ros_dst` are kept as their own sets rather than folded in with the cross-position
+# ROS page. Those pages rank within the position (Seattle is ROS D/ST 1), the overall page ranks
+# across all of them, and merging the two would leave a set whose rank_ecr means one thing for
+# some rows and another for the rest. They exist because the weekly K and D/ST rankings cover
+# only the current week, and the streaming view looks three weeks ahead.
 PAGES: tuple[Page, ...] = (
     Page("weekly", "qb", "qb"),
     Page("weekly", "rb", "half-point-ppr-rb"),
@@ -68,8 +74,13 @@ PAGES: tuple[Page, ...] = (
     Page("weekly", "k", "k"),
     Page("weekly", "dst", "dst"),
     Page("ros", "overall", "ros-half-point-ppr-overall"),
+    Page("ros_k", "k", "ros-k"),
+    Page("ros_dst", "dst", "ros-dst"),
     Page("waiver", "overall", "waiver-wire-half-point-ppr-overall"),
 )
+
+# Sets carrying rest-of-season ranks for a single position, keyed by that position.
+ROS_POSITION_SETS = {"K": "ros_k", "DEF": "ros_dst"}
 
 
 def _num(v: Any) -> float | None:
@@ -265,9 +276,12 @@ if __name__ == "__main__":
         sys.exit(1)
 
 
+SET_NAMES = ("weekly", "ros", "waiver", "ros_k", "ros_dst")
+
+
 def indexes(data: dict | None) -> dict[str, dict[str, dict]]:
-    """{set_name: {sleeper_id: row}} for all three sets."""
-    return {name: by_sleeper_id(data, name) for name in ("weekly", "ros", "waiver")}
+    """{set_name: {sleeper_id: row}} for every set."""
+    return {name: by_sleeper_id(data, name) for name in SET_NAMES}
 
 
 def experts(data: dict | None, set_name: str, position: str | None = None) -> int | None:
