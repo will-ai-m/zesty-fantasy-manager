@@ -511,7 +511,13 @@ class Service:
             "injuries": injuries, "proj": proj, "next_proj": next_proj or {},
             "season_pts": self._points_by_week(past_stats, past_weeks, scoring),
             "prev_pts": self._points_by_week(prev_stats, prev_weeks, scoring),
-            "yahoo": info, "pool_ids": set(info) | rostered,
+            "yahoo": info,
+            # Deliberately no pool_ids: availability is "not on anyone's roster here", the same
+            # definition the Sleeper path uses. Yahoo paginates its player list 25 rows at a time
+            # and this league alone has 414 available receivers, so scoping the pool to whatever
+            # the scrape reached silently hid real free agents (a rank-154 receiver, in practice).
+            # The scrape still supplies Yahoo's own ownership and FA/waiver status where it got
+            # that far; beyond it, Sleeper's league-wide ownership stands in.
             "usage": usage,
         }
 
