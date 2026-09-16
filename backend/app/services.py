@@ -11,6 +11,7 @@ from zoneinfo import ZoneInfo
 from .config import DATA_DIR, ESPN_LEAGUE_IDS, ESPN_SWID, FANTASY_POSITIONS, OUT_STATUSES, \
     YAHOO_LEAGUE_IDS, require_username
 from . import fantasypros as fp
+from . import teamstats
 from .espn import Espn, normalize_league as espn_normalize_league, normalize_pool as espn_normalize_pool, \
     normalize_transactions as espn_normalize_transactions, stat_id as espn_stat_id
 from .yahoo import Yahoo, normalize_league as yahoo_normalize_league, normalize_pool as yahoo_normalize_pool, \
@@ -363,6 +364,22 @@ class Service:
                 e["weeks"][w] = pts
         return out
 
+    async def _week_points(self, season: str, week: int, scoring: dict) -> dict[str, float]:
+        """Points scored in the week being viewed, which may still be in progress.
+
+        Kept apart from `season_pts`, which only covers completed weeks: folding a live week into
+        the season total would make points-per-game lurch around during the games. Cached for ten
+        minutes rather than a day, since the number is still moving.
+        """
+        recs = await self._stats_index(season, week, final=False)
+        out: dict[str, float] = {}
+        for pid, rec in recs.items():
+            st = rec.get("stats") or {}
+            pts = score(st, scoring) if st else None
+            if pts is not None:
+                out[pid] = pts
+        return out
+
     async def _week_context(self, b: dict, week: int) -> dict:
         """Everything needed to enrich a player for one league/week."""
         league = b["league"]
@@ -389,7 +406,8 @@ class Service:
             asyncio.gather(*(self._stats_index(season, w, final=True) for w in past_weeks)),
             asyncio.gather(*(self._stats_index(prev_season, w, final=True) for w in prev_weeks)),
         )
-        usage = await self._usage_index(season, week - 1)
+        usage, week_pts = await asyncio.gather(self._usage_index(season, week - 1),
+                                               self._week_points(season, week, scoring))
         proj: dict[int, dict[str, dict]] = dict(zip(ros_weeks, proj_by_week))
         next_proj = proj.get(week + 1)
         if next_proj is None:
@@ -401,6 +419,7 @@ class Service:
             "players": players, "byes": byes, "opp": opp, "sched": sched, "research": research, "trending": trending,
             "injuries": injuries, "proj": proj, "next_proj": next_proj or {},
             "season_pts": self._points_by_week(past_stats, past_weeks, scoring),
+            "week_pts": week_pts,
             "prev_pts": self._points_by_week(prev_stats, prev_weeks, scoring),
             "usage": usage,
         }
@@ -434,7 +453,8 @@ class Service:
             self.espn.pool(raw_id, season, ("FREEAGENT", "WAIVERS"), 600, stat_ids),
             self.espn.pool(raw_id, season, ("ONTEAM",), 400, stat_ids),
         )
-        usage = await self._usage_index(season, week - 1)
+        usage, week_pts = await asyncio.gather(self._usage_index(season, week - 1),
+                                               self._week_points(season, week, scoring))
         info_fa, syn_fa = espn_normalize_pool(fa_pool, season, week, xw, pro_teams)
         info_team, syn_team = espn_normalize_pool(team_pool, season, week, xw, pro_teams)
         info = {**info_fa, **info_team}
@@ -455,6 +475,7 @@ class Service:
             "players": merged_players, "byes": byes, "opp": opp, "sched": sched, "research": research, "trending": trending,
             "injuries": injuries, "proj": proj, "next_proj": next_proj or {},
             "season_pts": self._points_by_week(past_stats, past_weeks, scoring),
+            "week_pts": week_pts,
             "prev_pts": self._points_by_week(prev_stats, prev_weeks, scoring),
             "ros_override": ros_override, "espn": info, "pool_ids": set(info) | rostered,
             "usage": usage,
@@ -492,7 +513,8 @@ class Service:
         if next_proj is None:
             next_proj = await self._proj_index(season, week + 1)
 
-        usage = await self._usage_index(season, week - 1)
+        usage, week_pts = await asyncio.gather(self._usage_index(season, week - 1),
+                                               self._week_points(season, week, scoring))
         info, syn = yahoo_normalize_pool(pool, xw)
         merged_players = dict(players)
         merged_players.update(b.get("synthetic", {}))
@@ -511,6 +533,7 @@ class Service:
             "players": merged_players, "byes": byes, "opp": opp, "sched": sched, "research": research, "trending": trending,
             "injuries": injuries, "proj": proj, "next_proj": next_proj or {},
             "season_pts": self._points_by_week(past_stats, past_weeks, scoring),
+            "week_pts": week_pts,
             "prev_pts": self._points_by_week(prev_stats, prev_weeks, scoring),
             "yahoo": info,
             # Deliberately no pool_ids: availability is "not on anyone's roster here", the same
@@ -596,6 +619,7 @@ class Service:
             "proj_week": score(cur.get("stats") if cur else None, scoring),
             "proj_next": score(nxt.get("stats") if nxt else None, scoring),
             "proj_ros": round(ros, 1) if ros_any else None,
+            "week_pts": ctx.get("week_pts", {}).get(pid),
             "last_week_pts": last_week,
             "season_pts": round(sp["total"], 1) if sp else None,
             "season_gp": sp["gp"] if sp else 0,
@@ -761,8 +785,9 @@ class Service:
         return []
 
     async def _team_odds(self, season: str, week: int) -> dict[str, dict]:
-        """team -> {implied, opp_implied, label} for one week. Empty when the book hasn't
-        priced that week yet, which is normal for games two or three weeks out."""
+        """team -> {implied, opp_implied, label, weather} for one week. A team missing from the
+        result has no game that week. Weather is only ever present for the current week — ESPN
+        publishes no forecast further out than a few days."""
         if not self.odds:
             return {}
         try:
@@ -773,10 +798,11 @@ class Service:
         for g in payload.get("games") or []:
             away, home = g.get("away"), g.get("home")
             ai, hi = g.get("away_implied"), g.get("home_implied")
+            wx = g.get("weather")
             if away:
-                out[away] = {"implied": ai, "opp_implied": hi, "label": f"@ {home}"}
+                out[away] = {"implied": ai, "opp_implied": hi, "label": f"@ {home}", "weather": wx}
             if home:
-                out[home] = {"implied": hi, "opp_implied": ai, "label": f"vs {away}"}
+                out[home] = {"implied": hi, "opp_implied": ai, "label": f"vs {away}", "weather": wx}
         return out
 
     async def waivers(self, league_id: str, week: int | None) -> dict:
@@ -852,7 +878,9 @@ class Service:
             movers, movement = [], None
         by_trending = movers if movement else None
 
-        odds_weeks = [w for w in range(week, min(REGULAR_SEASON_WEEKS, week + 2) + 1)]
+        # Four weeks: the schedule runs across each streaming row, and a month is about as far
+        # as a claim made now is worth planning against.
+        odds_weeks = [w for w in range(week, min(REGULAR_SEASON_WEEKS, week + 3) + 1)]
         odds_by_week = dict(zip(odds_weeks, await asyncio.gather(*(self._team_odds(season, w) for w in odds_weeks))))
         # FantasyPros ranks K and D/ST one week at a time, so its weekly ranks are attached only
         # to the week they cover. The weeks after that get its rest-of-season ranking for the
@@ -869,19 +897,19 @@ class Service:
         # no equivalent; there is only one per team.
         fp_starters = {pid for pid, row in (fp_idx.get("weekly") or {}).items()
                        if row.get("position") == "K"} or None
+        # Offensive efficiency for the kicker view — whether a team's points arrive as touchdowns
+        # or as field goals, which the implied total cannot tell you. Surfaced as columns, not
+        # folded into the ordering.
+        team_factors = await teamstats.load(self.s.cache, season)
         streamers: dict[str, list[dict]] = {}
         for pos in ("DEF", "K"):
             avail = [r for r in free if r["position"] == pos]
             ros_ranks = {pid: row["rank_ecr"]
                          for pid, row in (fp_idx.get(fp.ROS_POSITION_SETS[pos]) or {}).items()
                          if row.get("rank_ecr")}
-            starters = fp_starters if pos == "K" else None
-            streamers[pos] = [
-                {"week": w,
-                 "players": wv.stream_candidates(avail, pos, odds_by_week.get(w) or {}, w, fp_week,
-                                                 ros_ranks, starters)[:24]}
-                for w in odds_weeks
-            ]
+            streamers[pos] = wv.stream_table(
+                avail, pos, odds_by_week, odds_weeks, fp_week, ros_ranks,
+                fp_starters if pos == "K" else None, team_factors)
 
         return {
             "league": lg,

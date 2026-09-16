@@ -48,8 +48,10 @@ function usageColumns(lastWeek: number): Column<Player>[] {
  * `lineup` is "should I start this" — they are already mine, so the market says nothing.
  * Backward-looking scoring (last week, PPG, last season) lives in the player drawer, which
  * carries the full per-week game log for both seasons. */
-export function playerColumns(opts: { week: number; rosEnd: number; onPlan?: (p: Player) => void; showRank?: boolean; vsMine?: boolean; espn?: boolean; fp?: boolean; fpWaiver?: boolean; usage?: number; variant?: 'waiver' | 'lineup' }): Column<Player>[] {
-  const market = (opts.variant ?? 'waiver') === 'waiver'
+export function playerColumns(opts: { week: number; rosEnd: number; onPlan?: (p: Player) => void; showRank?: boolean; vsMine?: boolean; espn?: boolean; fp?: boolean; fpWaiver?: boolean; usage?: number; owned?: boolean; livePts?: boolean; variant?: 'waiver' | 'lineup' }): Column<Player>[] {
+  // The market view is the waiver default, but a lineup can ask for ownership explicitly — on
+  // your own roster it is not "should I add him" but "is the rest of the world starting him".
+  const market = opts.owned ?? (opts.variant ?? 'waiver') === 'waiver'
   const cols: Column<Player>[] = [
     {
       key: 'name', header: 'Player',
@@ -72,7 +74,7 @@ export function playerColumns(opts: { week: number; rosEnd: number; onPlan?: (p:
     { key: 'depth', header: 'Dep', title: 'Depth chart order at position', render: (p) => <span className="text-stone-600">{p.depth_chart_position ? `${p.depth_chart_position}${p.depth_chart_order ?? ''}` : '—'}</span>, sort: (p) => p.depth_chart_order, align: 'center' },
     ...(opts.usage ? usageColumns(opts.usage) : []),
     ...(market ? [{
-      key: 'owned', header: 'Own%', title: 'Percent of Sleeper leagues where this player is rostered, and where they are started',
+      key: 'owned', header: 'Own%', title: "Percent of this platform's leagues where the player is rostered, and the smaller number, where they are started",
       render: (p: Player) => (
         <span>{pct(p.owned)}<span className="ml-1 text-[10px] text-stone-400">{pct(p.started)}</span></span>
       ),
@@ -104,6 +106,14 @@ export function playerColumns(opts: { week: number; rosEnd: number; onPlan?: (p:
       key: 'adds_24h', header: '+24h', title: 'Adds across Sleeper, last 24h.',
       render: (p: Player) => <span className={p.adds_24h > 0 ? 'text-emerald-700 font-medium' : 'text-stone-400'}>{p.adds_24h ? fmtInt(p.adds_24h) : '·'}</span>,
       sort: (p: Player) => p.adds_24h, align: 'right' as const, desc: true,
+    }] : []),
+    ...(opts.livePts ? [{
+      key: 'week_pts', header: `Wk ${opts.week} pts`,
+      title: `Points actually scored in week ${opts.week} under this league's scoring. Blank until the game has been played.`,
+      render: (p: Player) => p.week_pts == null
+        ? <span className="text-stone-300">·</span>
+        : <span className={p.week_pts >= 15 ? 'font-semibold text-emerald-700' : 'font-medium'}>{fmt(p.week_pts)}</span>,
+      sort: (p: Player) => p.week_pts, align: 'right' as const, desc: true,
     }] : []),
     {
       key: 'proj_week', header: `Wk ${opts.week} proj`, title: opts.espn ? "ESPN's projection for this week under this league's scoring" : 'Projected points this week (league scoring)',

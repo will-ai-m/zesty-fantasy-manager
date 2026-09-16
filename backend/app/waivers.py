@@ -24,12 +24,13 @@ week-to-week carryover, so the matchup carries most of the weight: a defence is 
 its opponent is projected to score little, and a kicker is good if his own offence is projected to
 score a lot, both read off Vegas implied totals.
 
-FantasyPros' K and D/ST rankings sit in the next column rather than being folded into that
-number. The two disagree often — the experts weigh a defence's own quality, the line only weighs
-who it is playing — and which one to trust is a judgement worth making per player, not one to
-average away. The weekly rankings cover one week at a time, so the current week shows those and
-the weeks after it fall back to the rest-of-season ranking, which is a standing view of the unit
-rather than a stale copy of last week's matchup call. Each row records which of the two it is.
+FantasyPros' K and D/ST rankings sit in their own columns rather than being folded into that
+number — the weekly rank and the rest-of-season rank both, since "best this Sunday" and "worth
+holding" are different questions and the gap between them is the interesting part. Neither
+touches the ordering, which is Vegas alone.
+
+Each row runs the next four weeks of matchups across it, because the good matchup three weeks
+out is claimed by whoever looks that far ahead.
 """
 from __future__ import annotations
 
@@ -38,10 +39,6 @@ from typing import Any
 # The touches that define a role at each position. A back's receiving work counts towards his
 # volume as much as his carries do; a receiver has only the one kind of touch.
 VOLUME_STATS = {"WR": ("lw_targets",), "TE": ("lw_targets",), "RB": ("lw_carries", "lw_targets")}
-
-
-def _clamp(x: float, lo: float = 0.0, hi: float = 1.0) -> float:
-    return max(lo, min(hi, x))
 
 
 def volume(row: dict) -> float | None:
@@ -135,27 +132,33 @@ def _fp_rank(row: dict) -> int | None:
     return int(digits) if digits else None
 
 
-def stream_candidates(rows: list[dict], position: str, week_odds: dict[str, dict], week: int,
-                      fp_week: int | None = None, ros_ranks: dict[str, int] | None = None,
-                      starters: set[str] | None = None) -> list[dict]:
-    """Rank available K or D/ST for one week on the matchup, carrying FantasyPros' rank alongside.
+def stream_table(rows: list[dict], position: str, odds_by_week: dict[int, dict[str, dict]],
+                 weeks: list[int], fp_week: int | None = None, ros_ranks: dict[str, int] | None = None,
+                 starters: set[str] | None = None, factors: dict[str, dict] | None = None) -> list[dict]:
+    """One row per available K or D/ST, carrying the next few weeks of matchups across it.
 
-    A defence scores on its *opponent's* implied total (low is good); a kicker on his *own*
-    team's (high is good). FantasyPros' rank is attached for comparison but kept out of the
-    ordering — the two measure different things and where they disagree is worth seeing, not
-    averaging. The week FantasyPros has actually ranked gets its weekly rank; the weeks past it
-    get the rest-of-season rank instead, and `fp_basis` says which, because "3rd this week" and
-    "3rd the rest of the way" are not the same claim. Teams on bye, or with no line posted yet,
-    are dropped rather than ranked at zero — an unpriced game is unknown, not bad.
+    A streaming decision is never about one week in isolation — the good matchup three weeks out
+    gets claimed by whoever looks that far, and a unit worth holding is one with two or three
+    good weeks in a row. So the schedule runs across the row rather than down three separate
+    tables, and you read a defence's next month at a glance.
 
-    `starters` restricts the pool to players who hold the job. It matters for kickers: every
-    team carries one, but a backup sitting on the practice squad shares his starter's implied
-    total exactly, so ranking on the matchup alone floats him up beside the man actually taking
-    the kicks. FantasyPros ranking a kicker for the week is the cheapest available read on who
-    that is. Left as None for D/ST, where a unit cannot be second string.
+    Ordering is on the current week only: a defence by its opponent's implied total, ascending,
+    because it scores off the other team failing; a kicker by his own team's, descending. Rows
+    with no game or no line this week sort last rather than being dropped — the team is still on
+    the board for the weeks after it.
+
+    FantasyPros' weekly rank and its rest-of-season rank both ride along, in separate fields.
+    They answer different questions — who is best this Sunday, and who is worth holding — and
+    neither is folded into the ordering, which is Vegas alone.
+
+    `starters` restricts the pool to players who hold the job, which matters for kickers: a
+    backup shares his starter's implied total exactly and would otherwise rank beside him.
+    `factors` attaches team offensive efficiency, the context that says whether a team's points
+    tend to arrive as touchdowns or as field goals.
     """
-    use_fp = fp_week is not None and week == fp_week
-    ros_ranks = ros_ranks or {}
+    ros_ranks, factors = ros_ranks or {}, factors or {}
+    this_week = weeks[0]
+    use_fp = fp_week is not None and fp_week == this_week
     out = []
     for r in rows:
         team = r.get("team")
@@ -163,34 +166,33 @@ def stream_candidates(rows: list[dict], position: str, week_odds: dict[str, dict
             continue
         if starters is not None and r["player_id"] not in starters:
             continue
-        g = week_odds.get(team)
-        if not g or g.get("implied") is None:
-            continue
-        own, opp_imp = g["implied"], g.get("opp_implied")
-        if position == "DEF":
-            if opp_imp is None:
-                continue
-            # ~28 implied against is about as bad as a matchup gets, ~8 about as good; scaling
-            # across that full span keeps distinct matchups distinct instead of clamping to a tie.
-            value = _clamp((28.0 - float(opp_imp)) / 20.0)
-            basis = round(float(opp_imp), 1)
-        else:
-            value = _clamp((float(own) - 10.0) / 20.0)
-            basis = round(float(own), 1)
-        if use_fp:
-            fp_rank, fp_basis = _fp_rank(r), "week"
-        else:
-            fp_rank, fp_basis = ros_ranks.get(r["player_id"]), "ros"
+        schedule = []
+        for w in weeks:
+            g = (odds_by_week.get(w) or {}).get(team)
+            schedule.append({
+                "week": w,
+                # No entry at all means no game that week — a bye, not an unpriced one.
+                "matchup": g.get("label") if g else None,
+                "implied": g.get("implied") if g else None,
+                "opp_implied": g.get("opp_implied") if g else None,
+                "weather": g.get("weather") if g else None,
+            })
+        now = schedule[0]
+        basis = now["opp_implied"] if position == "DEF" else now["implied"]
         out.append({
             **r,
-            "week": week,
-            "matchup": g.get("label"),
-            "implied": round(float(own), 1),
-            "opp_implied": round(float(opp_imp), 1) if opp_imp is not None else None,
-            "stream_basis": basis,
-            "fp_rank": fp_rank,
-            "fp_basis": fp_basis if fp_rank is not None else None,
-            "stream_score": round(value, 3),
+            "weeks": schedule,
+            "matchup": now["matchup"],
+            "stream_basis": round(float(basis), 1) if basis is not None else None,
+            "fp_rank": _fp_rank(r) if use_fp else None,
+            "fp_ros_rank": ros_ranks.get(r["player_id"]),
+            "factors": factors.get(team) if position == "K" else None,
         })
-    out.sort(key=lambda r: -r["stream_score"])
+    # Lower implied against is a better defensive spot; higher implied for is a better kicking
+    # spot. Either way a row with nothing priced this week goes to the bottom.
+    worst = float("inf")
+    if position == "DEF":
+        out.sort(key=lambda r: r["stream_basis"] if r["stream_basis"] is not None else worst)
+    else:
+        out.sort(key=lambda r: -r["stream_basis"] if r["stream_basis"] is not None else worst)
     return out

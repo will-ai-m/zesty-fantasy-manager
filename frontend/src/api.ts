@@ -60,6 +60,8 @@ export interface Player extends Usage {
   waiver_until?: number | null
   owned_change?: number | null
   proj_season?: number | null
+  /** Points scored in the week being viewed, once the games have been played. */
+  week_pts: number | null
   last_week_pts: number | null
   season_pts: number | null
   season_gp: number
@@ -187,22 +189,48 @@ export interface PendingClaim {
 
 export interface Movement { kind: 'sleeper' | 'espn' | 'yahoo'; label: string; blurb: string }
 
-/** A K or D/ST ranked for one specific week on Vegas implied totals. */
-export interface Streamer extends Player {
+/** One week of a streamer's schedule. `matchup` is null when the team has no game — a bye. */
+export interface StreamGame {
   week: number
   matchup: string | null
   implied: number | null
   opp_implied: number | null
-  stream_basis: number
-  stream_score: number
-  /** FantasyPros' rank for this position, shown beside the matchup rather than merged into it.
-   * `fp_basis` says which ranking it is: 'week' for the week FantasyPros has published, 'ros'
-   * for the weeks after it, which fall back to the rest-of-season list. */
-  fp_rank: number | null
-  fp_basis: 'week' | 'ros' | null
+  /** ESPN only forecasts a few days out, so this is present for the current week and null after. */
+  weather: { summary: string | null; temperature: number | null } | null
 }
 
-export interface StreamWeek { week: number; players: Streamer[] }
+/** Team offensive efficiency, season to date — the context behind a kicker's implied total.
+ * `games` is the sample it rests on, which is small early in a season. */
+export interface TeamFactors {
+  games: number | null
+  rz_td_pct: number | null
+  rz_fg_pct: number | null
+  rz_score_pct: number | null
+  third_pct: number | null
+  third_att: number | null
+  fourth_att: number | null
+  fourth_att_pg: number | null
+  points_pg: number | null
+  fg_att: number | null
+  fg_made: number | null
+  fg_long: number | null
+  fg_att_short: number | null
+  fg_att_long: number | null
+  fg_att_pg: number | null
+}
+
+/** An available K or D/ST with the next four weeks of matchups running across the row. */
+export interface Streamer extends Player {
+  weeks: StreamGame[]
+  matchup: string | null
+  /** The current week's driver: opponent implied total for a defence, own for a kicker. */
+  stream_basis: number | null
+  /** FantasyPros' rank for this week, and for the rest of the season. Separate fields on purpose
+   * — best this Sunday and worth holding are different questions — and neither orders the table. */
+  fp_rank: number | null
+  fp_ros_rank: number | null
+  factors: TeamFactors | null
+}
 
 export interface WaiversResponse {
   league: LeagueSummary
@@ -216,7 +244,7 @@ export interface WaiversResponse {
   by_trending: Target[] | null
   movement: Movement | null
   pending: PendingClaim[]
-  streamers: { DEF: StreamWeek[]; K: StreamWeek[] }
+  streamers: { DEF: Streamer[]; K: Streamer[] }
   stream_weeks: number[]
   articles: ArticleDigest | null
   players: Player[]

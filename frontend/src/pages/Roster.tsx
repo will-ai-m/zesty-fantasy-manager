@@ -10,7 +10,7 @@ import { playerColumns } from './Waivers'
 type SlotRow = { slot: string; player: Player | null; key: string }
 
 function slotColumns(week: number, rosEnd: number): Column<SlotRow>[] {
-  const base = playerColumns({ week, rosEnd, fp: true, variant: 'lineup' })
+  const base = playerColumns({ week, rosEnd, fp: true, owned: true, livePts: true, variant: 'lineup' })
   const wrapped: Column<SlotRow>[] = base.map((c) => ({
     ...c,
     render: (r) => (r.player ? c.render(r.player) : c.key === 'name' ? <span className="text-red-600">Empty</span> : null),
