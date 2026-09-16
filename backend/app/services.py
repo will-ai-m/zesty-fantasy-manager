@@ -903,13 +903,16 @@ class Service:
         team_factors = await teamstats.load(self.s.cache, season)
         streamers: dict[str, list[dict]] = {}
         for pos in ("DEF", "K"):
-            avail = [r for r in free if r["position"] == pos]
+            # Free agents plus your own, so "is anything out there better than what I have"
+            # is one glance down a column rather than a comparison you carry in your head.
+            avail = [r for r in rows if r["position"] == pos
+                     and (r["player_id"] not in rostered or r["player_id"] in my_ids)]
             ros_ranks = {pid: row["rank_ecr"]
                          for pid, row in (fp_idx.get(fp.ROS_POSITION_SETS[pos]) or {}).items()
                          if row.get("rank_ecr")}
             streamers[pos] = wv.stream_table(
                 avail, pos, odds_by_week, odds_weeks, fp_week, ros_ranks,
-                fp_starters if pos == "K" else None, team_factors)
+                fp_starters if pos == "K" else None, team_factors, my_ids)
 
         return {
             "league": lg,

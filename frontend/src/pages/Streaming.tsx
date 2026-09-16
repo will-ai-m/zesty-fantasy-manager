@@ -92,11 +92,12 @@ function StreamTable({ pos, rows, weeks, onPlan }: { pos: 'K' | 'DEF'; rows: Str
             const f: TeamFactors | null = s.factors
             const wx = k ? adverse(s.weeks[0]?.weather) : null
             return (
-              <tr key={s.player_id} className={`border-t border-stone-100 ${i === 0 ? 'bg-emerald-50/60' : ''}`}>
-                <td className="px-3 py-1.5">
+              <tr key={s.player_id} className={`border-t border-stone-100 ${s.mine ? 'bg-sky-50/40' : i === 0 ? 'bg-emerald-50/60' : ''}`}>
+                <td className={`py-1.5 pr-3 ${s.mine ? 'border-l-2 border-sky-500 pl-2.5' : 'pl-3'}`}>
                   <span className="inline-flex items-center gap-1.5">
                     {i === 0 && <span className="rounded bg-emerald-600 px-1 py-0.5 text-[9px] font-bold leading-none text-white">1</span>}
                     <PlayerCell p={s} />
+                    {s.mine && <span title="Already on your roster — here as the bar anything you claim has to clear" className="rounded bg-sky-600 px-1 py-0.5 text-[9px] font-bold leading-none text-white">YOURS</span>}
                     {k && wx && (
                       <span title="Forecast for this week's game. ESPN publishes none for later weeks, and carries no wind — the one thing that most changes a kick."
                             className="rounded bg-amber-100 px-1 py-0.5 text-[9px] font-medium leading-none text-amber-800">{wx}</span>
@@ -129,7 +130,7 @@ function StreamTable({ pos, rows, weeks, onPlan }: { pos: 'K' | 'DEF'; rows: Str
                 </>}
                 <td className="px-2 py-1.5 text-right text-stone-500">{pct(s.owned)}</td>
                 <td className="pr-2">
-                  {onPlan && <button onClick={() => onPlan(s)} className="rounded border border-stone-300 px-1.5 py-0.5 text-[10px] text-stone-700 hover:border-amber-400 hover:bg-amber-50">+</button>}
+                  {onPlan && !s.mine && <button onClick={() => onPlan(s)} className="rounded border border-stone-300 px-1.5 py-0.5 text-[10px] text-stone-700 hover:border-amber-400 hover:bg-amber-50">+</button>}
                 </td>
               </tr>
             )
@@ -170,7 +171,7 @@ export default function Streaming() {
           <LeagueBar leagueId={league.league_id} />
           <span className="flex items-center gap-2"><PlatformBadge platform={league.platform} />Streaming · {league.name}</span>
         </h1>
-        {weeks.length > 0 && <span className="ml-auto text-[12px] text-stone-500">Weeks {weeks.join(', ')} · available only</span>}
+        {weeks.length > 0 && <span className="ml-auto text-[12px] text-stone-500">Weeks {weeks.join(', ')} · free agents plus yours</span>}
       </div>
 
       <div className="flex flex-wrap items-center gap-3">
@@ -193,6 +194,7 @@ export default function Streaming() {
             <span>
               Ordered by this week's opponent implied total, lowest first — a defence scores off the other team failing.
               The next {weeks.length} weeks run across each row so you can take a good matchup before someone else does.
+              Yours are in the table too, ranked by the same rule — they are the bar a claim has to clear.
             </span>
             <span className="flex items-center gap-1.5 text-[11px]">
               <span className="rounded bg-emerald-100/70 px-1.5 py-0.5 font-semibold text-emerald-900">≤20.5 soft</span>
@@ -211,7 +213,7 @@ export default function Streaming() {
             who it is playing, so the columns describe the offence: how often it stalls in the red zone instead of scoring, how well it sustains
             drives, how often the staff takes the kick away on fourth down, and what all of that adds up to in attempts.
             {games != null && <> Season to date — <span className="font-medium text-stone-600">{games} game{games === 1 ? '' : 's'}</span>, so read the rates as a first signal rather than a settled one.</>}
-            {' '}Limited to the kickers FantasyPros ranks this week, since a backup shares his starter's implied total exactly.
+            {' '}Free agents are limited to the kickers FantasyPros ranks this week, since a backup shares his starter's implied total exactly; yours is here either way.
           </p>
           <StreamTable pos="K" rows={data.streamers.K} weeks={weeks} onPlan={onPlan} />
         </div>

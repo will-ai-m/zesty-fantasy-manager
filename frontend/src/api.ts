@@ -219,8 +219,11 @@ export interface TeamFactors {
   fg_att_pg: number | null
 }
 
-/** An available K or D/ST with the next four weeks of matchups running across the row. */
+/** A K or D/ST with the next four weeks of matchups running across the row — the free agents,
+ * plus the ones already on your roster so the comparison is on the page rather than in your head. */
 export interface Streamer extends Player {
+  /** Already yours. Sorts by the same rule as everyone else; it is the benchmark, not an exception. */
+  mine: boolean
   weeks: StreamGame[]
   matchup: string | null
   /** The current week's driver: opponent implied total for a defence, own for a kicker. */

@@ -134,7 +134,8 @@ def _fp_rank(row: dict) -> int | None:
 
 def stream_table(rows: list[dict], position: str, odds_by_week: dict[int, dict[str, dict]],
                  weeks: list[int], fp_week: int | None = None, ros_ranks: dict[str, int] | None = None,
-                 starters: set[str] | None = None, factors: dict[str, dict] | None = None) -> list[dict]:
+                 starters: set[str] | None = None, factors: dict[str, dict] | None = None,
+                 mine: set[str] | None = None) -> list[dict]:
     """One row per available K or D/ST, carrying the next few weeks of matchups across it.
 
     A streaming decision is never about one week in isolation — the good matchup three weeks out
@@ -151,12 +152,18 @@ def stream_table(rows: list[dict], position: str, odds_by_week: dict[int, dict[s
     They answer different questions — who is best this Sunday, and who is worth holding — and
     neither is folded into the ordering, which is Vegas alone.
 
-    `starters` restricts the pool to players who hold the job, which matters for kickers: a
-    backup shares his starter's implied total exactly and would otherwise rank beside him.
-    `factors` attaches team offensive efficiency, the context that says whether a team's points
-    tend to arrive as touchdowns or as field goals.
+    `mine` are the ones already on your roster. They sit in the table alongside the free agents
+    and sort by the same rule, because the question is never "what is the best matchup" on its
+    own — it is whether any of them beats what you already have. A table of only free agents
+    makes you hold that comparison in your head. They are exempt from the `starters` filter: if
+    you roster him he is relevant whether or not anyone ranked him this week.
+
+    `starters` restricts the rest of the pool to players who hold the job, which matters for
+    kickers: a backup shares his starter's implied total exactly and would otherwise rank beside
+    him. `factors` attaches team offensive efficiency, the context that says whether a team's
+    points tend to arrive as touchdowns or as field goals.
     """
-    ros_ranks, factors = ros_ranks or {}, factors or {}
+    ros_ranks, factors, mine = ros_ranks or {}, factors or {}, mine or set()
     this_week = weeks[0]
     use_fp = fp_week is not None and fp_week == this_week
     out = []
@@ -164,7 +171,8 @@ def stream_table(rows: list[dict], position: str, odds_by_week: dict[int, dict[s
         team = r.get("team")
         if not team:
             continue
-        if starters is not None and r["player_id"] not in starters:
+        is_mine = r["player_id"] in mine
+        if starters is not None and not is_mine and r["player_id"] not in starters:
             continue
         schedule = []
         for w in weeks:
@@ -181,6 +189,7 @@ def stream_table(rows: list[dict], position: str, odds_by_week: dict[int, dict[s
         basis = now["opp_implied"] if position == "DEF" else now["implied"]
         out.append({
             **r,
+            "mine": is_mine,
             "weeks": schedule,
             "matchup": now["matchup"],
             "stream_basis": round(float(basis), 1) if basis is not None else None,
