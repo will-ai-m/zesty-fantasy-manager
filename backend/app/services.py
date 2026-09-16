@@ -862,15 +862,25 @@ class Service:
         pending = await self._pending_claims(b, week)
         fp_data, fp_idx = self._fp()
         fp_week = ((fp_data or {}).get("sets", {}).get("weekly") or {}).get("week")
+        #
+        # Kickers are cut to the ones FantasyPros ranks for the week — its K page runs about one
+        # row per team, so being on it is the closest thing to a published starter list. Without
+        # that cut a backup inherits his starter's implied total and ranks alongside him, which
+        # is how a 0.1%-rostered practice-squad kicker ends up second on the list. Defences need
+        # no equivalent; there is only one per team.
+        fp_starters = {pid for pid, row in (fp_idx.get("weekly") or {}).items()
+                       if row.get("position") == "K"} or None
         streamers: dict[str, list[dict]] = {}
         for pos in ("DEF", "K"):
             avail = [r for r in free if r["position"] == pos]
             ros_ranks = {pid: row["rank_ecr"]
                          for pid, row in (fp_idx.get(fp.ROS_POSITION_SETS[pos]) or {}).items()
                          if row.get("rank_ecr")}
+            starters = fp_starters if pos == "K" else None
             streamers[pos] = [
                 {"week": w,
-                 "players": wv.stream_candidates(avail, pos, odds_by_week.get(w) or {}, w, fp_week, ros_ranks)[:10]}
+                 "players": wv.stream_candidates(avail, pos, odds_by_week.get(w) or {}, w, fp_week,
+                                                 ros_ranks, starters)[:24]}
                 for w in odds_weeks
             ]
 

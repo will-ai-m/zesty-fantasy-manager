@@ -144,7 +144,8 @@ def _fp_rank(row: dict) -> int | None:
 
 
 def stream_candidates(rows: list[dict], position: str, week_odds: dict[str, dict], week: int,
-                      fp_week: int | None = None, ros_ranks: dict[str, int] | None = None) -> list[dict]:
+                      fp_week: int | None = None, ros_ranks: dict[str, int] | None = None,
+                      starters: set[str] | None = None) -> list[dict]:
     """Rank available K or D/ST for one week on the matchup, carrying FantasyPros' rank alongside.
 
     A defence scores on its *opponent's* implied total (low is good); a kicker on his *own*
@@ -154,6 +155,12 @@ def stream_candidates(rows: list[dict], position: str, week_odds: dict[str, dict
     get the rest-of-season rank instead, and `fp_basis` says which, because "3rd this week" and
     "3rd the rest of the way" are not the same claim. Teams on bye, or with no line posted yet,
     are dropped rather than ranked at zero — an unpriced game is unknown, not bad.
+
+    `starters` restricts the pool to players who hold the job. It matters for kickers: every
+    team carries one, but a backup sitting on the practice squad shares his starter's implied
+    total exactly, so ranking on the matchup alone floats him up beside the man actually taking
+    the kicks. FantasyPros ranking a kicker for the week is the cheapest available read on who
+    that is. Left as None for D/ST, where a unit cannot be second string.
     """
     use_fp = fp_week is not None and week == fp_week
     ros_ranks = ros_ranks or {}
@@ -161,6 +168,8 @@ def stream_candidates(rows: list[dict], position: str, week_odds: dict[str, dict
     for r in rows:
         team = r.get("team")
         if not team:
+            continue
+        if starters is not None and r["player_id"] not in starters:
             continue
         g = week_odds.get(team)
         if not g or g.get("implied") is None:

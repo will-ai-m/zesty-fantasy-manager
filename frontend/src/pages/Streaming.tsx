@@ -19,9 +19,15 @@ function StreamTable({ pos, week, players, onPlan }: { pos: 'K' | 'DEF'; week: n
   const fpBasis = players.find((s) => s.fp_basis)?.fp_basis ?? null
   return (
     <div className="overflow-hidden rounded-md border border-stone-200 bg-white">
-      <div className="border-b border-stone-200 bg-stone-50 px-3 py-1.5 text-[11px] font-semibold text-stone-600">Week {week}</div>
+      <div className="flex items-center justify-between border-b border-stone-200 bg-stone-50 px-3 py-1.5 text-[11px] font-semibold text-stone-600">
+        <span>Week {week}</span>
+        <span className="font-normal tabular-nums text-stone-400">{players.length} available</span>
+      </div>
+      {/* The whole pool scrolls inside a box the height of the old six-row table: the good
+          matchup three weeks out is often not in the top handful, and a fixed slice hid it. */}
+      <div className="max-h-[18rem] overflow-y-auto">
       <table className="w-full text-[12px]">
-        <thead>
+        <thead className="sticky top-0 z-10 bg-white shadow-[0_1px_0_theme(colors.stone.200)]">
           <tr className="text-[10px] uppercase tracking-wide text-stone-400">
             <th className="px-3 py-1 text-left font-medium">{pos === 'DEF' ? 'Defense' : 'Kicker'}</th>
             <th className="px-2 py-1 text-left font-medium">Matchup</th>
@@ -34,7 +40,7 @@ function StreamTable({ pos, week, players, onPlan }: { pos: 'K' | 'DEF'; week: n
           </tr>
         </thead>
         <tbody>
-          {players.slice(0, 6).map((s, i) => (
+          {players.map((s, i) => (
             <tr key={s.player_id} className={`border-t border-stone-100 ${i === 0 ? 'bg-emerald-50/60' : ''}`}>
               <td className="px-3 py-1.5">
                 <span className="inline-flex items-center gap-1.5">
@@ -59,6 +65,7 @@ function StreamTable({ pos, week, players, onPlan }: { pos: 'K' | 'DEF'; week: n
           ))}
         </tbody>
       </table>
+      </div>
     </div>
   )
 }
@@ -91,6 +98,7 @@ export default function Streaming() {
       <p className="text-[12px] text-stone-500">
         Ranked on Vegas implied totals, not season value — a defence against an offence projected to score little, a kicker on an offence projected to score a lot.
         Looking {data?.stream_weeks.length ?? 3} weeks out lets you take a good matchup before someone else does.
+        Kickers are limited to the ones FantasyPros ranks for the week, since a backup shares his starter's implied total and would otherwise rank beside him.
       </p>
 
       {isLoading && <Spinner label="Pulling lines for the next few weeks…" />}
