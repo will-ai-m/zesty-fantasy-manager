@@ -19,7 +19,7 @@ export interface FpDetail {
   sets: { weekly?: FpSet; ros?: FpSet; waiver?: FpSet }
 }
 
-export interface Player {
+export interface Player extends Usage {
   player_id: string
   name: string
   position: string
@@ -128,10 +128,61 @@ export interface Me {
   leagues: LeagueSummary[]
 }
 
+/** Last completed week's opportunity, carried on every player row. */
+export interface Usage {
+  lw_snap_pct?: number | null
+  lw_snaps?: number | null
+  lw_targets?: number | null
+  lw_carries?: number | null
+  lw_rec?: number | null
+  lw_rz?: number | null
+  lw_volume?: number | null
+}
+
+export interface ExpertNote {
+  action: 'add' | 'buy' | 'sell' | 'hold'
+  sources: string[]
+  faab: string | null
+  priority: string | null
+  note: string | null
+}
+
+export interface Bid { min: number; rec: number; max: number; pct: number; note?: string }
+
+export type Tier = 'A' | 'B' | 'C' | 'D'
+
+/** A ranked claim candidate: a Player plus why it ranks and what to bid. */
+export interface Target extends Player {
+  rank: number
+  target_score: number
+  score_parts: { expert: number; opportunity: number; production: number; fit: number; market: number }
+  tier: Tier
+  tier_label: string
+  bid: Bid | null
+  expert: ExpertNote | null
+}
+
+/** A K or D/ST ranked for one specific week on Vegas implied totals. */
+export interface Streamer extends Player {
+  week: number
+  matchup: string | null
+  implied: number | null
+  opp_implied: number | null
+  stream_basis: number
+  stream_score: number
+}
+
+export interface StreamWeek { week: number; players: Streamer[] }
+
 export interface WaiversResponse {
   league: LeagueSummary
   week: number
   ros_end_week: number
+  faab: { budget: number; remaining: number; bid_min: number; uses_faab: boolean }
+  targets: Target[]
+  streamers: { DEF: StreamWeek[]; K: StreamWeek[] }
+  stream_weeks: number[]
+  expert_sources: { id: string; name: string; url: string; partial?: boolean }[] | null
   players: Player[]
 }
 

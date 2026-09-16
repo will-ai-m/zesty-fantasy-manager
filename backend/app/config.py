@@ -34,6 +34,12 @@ ESPN_LEAGUE_IDS = [x.strip() for x in os.environ.get("ESPN_LEAGUE_IDS", "").spli
 ESPN_S2 = os.environ.get("ESPN_S2", "").strip()
 ESPN_SWID = os.environ.get("ESPN_SWID", "").strip()
 
+# Yahoo: league ids (comma separated) plus the raw browser Cookie header. Yahoo's official OAuth API
+# needs an approved app; the pub-api-ro host the web frontend calls answers the same fantasy/v2 reads
+# authenticated by the session cookie instead. Read-only. See research/yahoo-cookie-access.md.
+YAHOO_LEAGUE_IDS = [x.strip() for x in os.environ.get("YAHOO_LEAGUE_IDS", "").split(",") if x.strip()]
+YAHOO_COOKIE = os.environ.get("YAHOO_COOKIE", "").strip()
+
 
 def require_username() -> str:
     if not SLEEPER_USERNAME:

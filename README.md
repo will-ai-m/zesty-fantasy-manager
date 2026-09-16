@@ -54,6 +54,10 @@ The ↻ button in the header drops the cache.
   research, schedule, depth-chart and injury endpoints the Sleeper app uses).
 - `backend/app/espn.py` — ESPN client (undocumented v3 "lm-api") and normalizers that reshape ESPN leagues,
   rosters, the player pool and transactions into the Sleeper-shaped structures the service layer uses.
+- `backend/app/yahoo.py` — Yahoo client that reads the logged-in `football.fantasysports.yahoo.com` HTML
+  pages (authenticated by the browser session cookie) and parses them with BeautifulSoup. Yahoo has no
+  projections, so the service layer scores Sleeper's projections with each league's translated Yahoo scoring;
+  Yahoo supplies the pool and ownership. FAAB balance and waiver priority are client-rendered and unavailable.
 - `backend/app/ids.py` — player identity: Sleeper `player_id` is canonical; ESPN/Yahoo ids map onto it via
   Sleeper's cross-ids, the nflverse crosswalk, then a name + position match.
 - `backend/app/services.py` — builds the view models (waivers, roster, trends, transactions).

@@ -8,8 +8,9 @@ from fastapi.middleware.cors import CORSMiddleware
 from fastapi.responses import JSONResponse
 
 from .cache import Cache
-from .config import DATA_DIR, ESPN_LEAGUE_IDS, ESPN_S2, ESPN_SWID, ConfigError
+from .config import DATA_DIR, ESPN_LEAGUE_IDS, ESPN_S2, ESPN_SWID, YAHOO_COOKIE, YAHOO_LEAGUE_IDS, ConfigError
 from .espn import Espn
+from .yahoo import Yahoo
 from .odds import Odds
 from .plans import PlanIn, PlanPatch, PlanStore
 from .services import Service
@@ -24,14 +25,19 @@ async def lifespan(app: FastAPI):
     app.state.sleeper = sleeper
     espn = Espn(cache, ESPN_S2, ESPN_SWID) if ESPN_LEAGUE_IDS else None
     app.state.espn = espn
-    app.state.service = Service(sleeper, espn)
-    app.state.odds = Odds(cache)
+    yahoo = Yahoo(cache, YAHOO_COOKIE) if (YAHOO_LEAGUE_IDS and YAHOO_COOKIE) else None
+    app.state.yahoo = yahoo
+    odds = Odds(cache)
+    app.state.odds = odds
+    app.state.service = Service(sleeper, espn, yahoo, odds)
     app.state.plans = PlanStore(DATA_DIR / "plans.json")
     yield
     await app.state.odds.aclose()
     await sleeper.aclose()
     if espn:
         await espn.aclose()
+    if yahoo:
+        await yahoo.aclose()
 
 
 app = FastAPI(title="Zesty Fantasy Manager", lifespan=lifespan)

@@ -1,6 +1,6 @@
 import { useMemo, useState } from 'react'
 import { useQuery } from '@tanstack/react-query'
-import { api, type Player } from '../api'
+import { api, type Player, type Streamer, type Target, type Tier } from '../api'
 import { fmt, fmtInt, gameDayRowClass, OUT_STATUSES, pct, POS_ORDER, shortDate } from '../lib/format'
 import { useApp } from '../components/AppContext'
 import { Chip, ErrorBox, LeagueBar, PlatformBadge, PlayerCell, Pos, Spinner } from '../components/Badges'
@@ -12,12 +12,55 @@ const ecrNum = (posRank: string | null | undefined): number =>
 
 const POS_FILTERS = ['ALL', 'QB', 'RB', 'WR', 'TE', 'FLEX', 'K', 'DEF']
 
+const TIER_STYLE: Record<Tier, string> = {
+  A: 'bg-emerald-600 text-white',
+  B: 'bg-emerald-100 text-emerald-900',
+  C: 'bg-stone-100 text-stone-700',
+  D: 'bg-stone-50 text-stone-500',
+}
+
+/** Usage columns: last week's opportunity, which is what separates a real breakout from one
+ * loud box score. Shared by the targets table and the browse table. */
+function usageColumns(lastWeek: number): Column<Player>[] {
+  return [
+    {
+      key: 'lw_snap_pct', header: 'Snap%', title: `Share of the team's offensive snaps in week ${lastWeek} — the clearest read on whether the role is real`,
+      render: (p) => p.lw_snap_pct == null
+        ? <span className="text-stone-300">·</span>
+        : <span className={p.lw_snap_pct >= 0.7 ? 'font-semibold text-emerald-700' : p.lw_snap_pct >= 0.45 ? 'text-stone-700' : 'text-stone-400'}>{Math.round(p.lw_snap_pct * 100)}%</span>,
+      sort: (p) => p.lw_snap_pct, align: 'right', desc: true,
+    },
+    {
+      key: 'lw_volume', header: 'Tgt/Car', title: `Week ${lastWeek} targets and carries. Volume is the input; points are the output.`,
+      render: (p) => {
+        const t = p.lw_targets ?? 0, c = p.lw_carries ?? 0
+        if (!t && !c) return <span className="text-stone-300">·</span>
+        return (
+          <span>
+            {t ? <span className="font-medium text-sky-800">{t}</span> : <span className="text-stone-300">0</span>}
+            <span className="mx-0.5 text-stone-300">/</span>
+            {c ? <span className="font-medium text-amber-800">{c}</span> : <span className="text-stone-300">0</span>}
+          </span>
+        )
+      },
+      sort: (p) => (p.lw_targets ?? 0) + (p.lw_carries ?? 0), align: 'right', desc: true,
+    },
+    {
+      key: 'last_week_pts', header: `Wk ${lastWeek}`, title: `Fantasy points scored in week ${lastWeek} under this league's scoring`,
+      render: (p) => p.last_week_pts == null
+        ? <span className="text-stone-300">·</span>
+        : <span className={p.last_week_pts >= 15 ? 'font-semibold text-emerald-700' : ''}>{fmt(p.last_week_pts)}</span>,
+      sort: (p) => p.last_week_pts, align: 'right', desc: true,
+    },
+  ]
+}
+
 /** Shared column set for the two player tables, which ask different questions.
  * `waiver` is "should I pick this up" — ownership and add velocity matter.
  * `lineup` is "should I start this" — they are already mine, so the market says nothing.
  * Backward-looking scoring (last week, PPG, last season) lives in the player drawer, which
  * carries the full per-week game log for both seasons. */
-export function playerColumns(opts: { week: number; rosEnd: number; onPlan?: (p: Player) => void; showRank?: boolean; vsMine?: boolean; espn?: boolean; fp?: boolean; fpWaiver?: boolean; variant?: 'waiver' | 'lineup' }): Column<Player>[] {
+export function playerColumns(opts: { week: number; rosEnd: number; onPlan?: (p: Player) => void; showRank?: boolean; vsMine?: boolean; espn?: boolean; fp?: boolean; fpWaiver?: boolean; usage?: number; variant?: 'waiver' | 'lineup' }): Column<Player>[] {
   const market = (opts.variant ?? 'waiver') === 'waiver'
   const cols: Column<Player>[] = [
     {
@@ -39,6 +82,7 @@ export function playerColumns(opts: { week: number; rosEnd: number; onPlan?: (p:
     { key: 'opp', header: `Wk ${opts.week} opp`, title: 'Opponent this week', render: (p) => <span className={p.on_bye ? 'text-stone-400' : ''}>{p.on_bye ? 'BYE' : p.opponent ?? '—'}</span>, sort: (p) => p.opponent },
     { key: 'bye', header: 'Bye', render: (p) => <span className={p.bye_week === opts.week ? 'font-semibold text-red-700' : 'text-stone-500'}>{p.bye_week ?? '—'}</span>, sort: (p) => p.bye_week, align: 'center' },
     { key: 'depth', header: 'Dep', title: 'Depth chart order at position', render: (p) => <span className="text-stone-600">{p.depth_chart_position ? `${p.depth_chart_position}${p.depth_chart_order ?? ''}` : '—'}</span>, sort: (p) => p.depth_chart_order, align: 'center' },
+    ...(opts.usage ? usageColumns(opts.usage) : []),
     ...(market ? [{
       key: 'owned', header: 'Own%', title: 'Percent of Sleeper leagues where this player is rostered, and where they are started',
       render: (p: Player) => (
@@ -102,19 +146,160 @@ export function playerColumns(opts: { week: number; rosEnd: number; onPlan?: (p:
   return cols
 }
 
+/** The claim list: who to put a bid in on, and for how much. */
+function targetColumns(opts: { week: number; lastWeek: number; usesFaab: boolean; onPlan?: (p: Player) => void }): Column<Target>[] {
+  const cols: Column<Target>[] = [
+    { key: 'rank', header: '#', render: (t) => <span className="text-[11px] tabular-nums text-stone-400">{t.rank}</span>, sort: (t) => t.rank, align: 'right' },
+    {
+      key: 'tier', header: 'Tier', title: 'Priority: A is a claim worth real money, D is a speculative stash',
+      render: (t) => <span className={`rounded px-1.5 py-0.5 text-[10px] font-bold leading-none ${TIER_STYLE[t.tier]}`} title={t.tier_label}>{t.tier}</span>,
+      sort: (t) => t.tier, align: 'center',
+    },
+    {
+      key: 'name', header: 'Player',
+      render: (t) => (
+        <span className="inline-flex items-center gap-1.5">
+          <PlayerCell p={t} />
+          {t.expert && (
+            <span
+              title={`${t.expert.sources.join(', ')}${t.expert.faab ? ` · suggests ${t.expert.faab}` : ''}${t.expert.note ? `\n\n${t.expert.note}` : ''}`}
+              className={`rounded px-1 py-0.5 text-[9.5px] font-bold leading-none ${t.expert.action === 'sell' ? 'bg-red-100 text-red-800' : 'bg-amber-100 text-amber-900'}`}
+            >{t.expert.action === 'sell' ? 'SELL' : 'COL'}</span>
+          )}
+        </span>
+      ),
+      sort: (t) => t.name,
+    },
+    { key: 'pos', header: 'Pos', render: (t) => <Pos pos={t.position} />, sort: (t) => POS_ORDER.indexOf(t.position), align: 'center' },
+    { key: 'opp', header: `Wk ${opts.week}`, title: 'Opponent the week you are claiming into', render: (t) => <span className={t.on_bye ? 'text-stone-400' : ''}>{t.on_bye ? 'BYE' : t.opponent ?? '—'}</span>, sort: (t) => t.opponent },
+  ]
+  if (opts.usesFaab) {
+    cols.push({
+      key: 'bid', header: 'Bid', title: 'Recommended FAAB out of what you have left. The range is min viable → walk-away price; the bold number is what to actually enter.',
+      render: (t) => {
+        if (!t.bid) return <span className="text-stone-400">—</span>
+        if (t.bid.note) return <span className="text-stone-400" title={t.bid.note}>—</span>
+        return (
+          <span className="whitespace-nowrap">
+            <span className="font-bold text-emerald-800">${t.bid.rec}</span>
+            <span className="ml-1 text-[10px] text-stone-400">${t.bid.min}–{t.bid.max}</span>
+          </span>
+        )
+      },
+      sort: (t) => t.bid?.rec ?? -1, align: 'right', desc: true,
+    })
+  }
+  cols.push(
+    ...(usageColumns(opts.lastWeek) as unknown as Column<Target>[]),
+    {
+      key: 'why', header: 'Why', title: 'What drives the ranking: E expert consensus · O opportunity (snaps/volume) · P production · F fit with your roster · M market heat',
+      render: (t) => {
+        const parts: [string, number, string][] = [
+          ['E', t.score_parts.expert, 'Expert consensus'],
+          ['O', t.score_parts.opportunity, 'Opportunity (snaps, volume)'],
+          ['P', t.score_parts.production, 'Production last week'],
+          ['F', t.score_parts.fit, 'Fit vs your weakest starter'],
+          ['M', t.score_parts.market, 'Market heat (adds)'],
+        ]
+        return (
+          <span className="inline-flex gap-0.5" title={parts.map(([l, v, d]) => `${d}: ${Math.round(v * 100)}`).join('\n')}>
+            {parts.map(([label, v]) => (
+              <span key={label} className={`w-4 rounded text-center text-[9px] font-bold leading-[14px] ${v >= 0.66 ? 'bg-emerald-600 text-white' : v >= 0.33 ? 'bg-emerald-100 text-emerald-900' : 'bg-stone-100 text-stone-400'}`}>{label}</span>
+            ))}
+          </span>
+        )
+      },
+      sort: (t) => t.target_score, align: 'center', desc: true,
+    },
+    { key: 'proj_week', header: 'Proj', title: 'Projected points the week you are claiming into', render: (t) => fmt(t.proj_week), sort: (t) => t.proj_week, align: 'right', desc: true },
+    { key: 'proj_ros', header: 'ROS', title: 'Rest-of-season projected points', render: (t) => <span className="font-medium">{fmt(t.proj_ros, 0)}</span>, sort: (t) => t.proj_ros, align: 'right', desc: true },
+    {
+      key: 'vs_mine', header: 'vs mine', title: 'Rest-of-season projection minus your weakest starter at the spot. Positive = an upgrade.',
+      render: (t) => t.vs_mine == null ? <span className="text-stone-400">—</span> : <span className={t.vs_mine > 0 ? 'font-semibold text-emerald-700' : 'text-stone-400'}>{t.vs_mine > 0 ? '+' : ''}{fmt(t.vs_mine, 0)}</span>,
+      sort: (t) => t.vs_mine, align: 'right', desc: true,
+    },
+    { key: 'owned', header: 'Own%', render: (t) => pct(t.owned), sort: (t) => t.owned, align: 'right', desc: true },
+  )
+  if (opts.onPlan) {
+    cols.push({
+      key: 'plan', header: '', render: (t) => (
+        <button onClick={() => opts.onPlan!(t)} className="rounded border border-stone-300 px-2 py-0.5 text-[11px] text-stone-700 hover:border-amber-400 hover:bg-amber-50">Plan</button>
+      ), align: 'center',
+    })
+  }
+  return cols
+}
+
+/** One week's streaming shortlist for K or D/ST. */
+function StreamTable({ pos, week, players, onPlan }: { pos: 'K' | 'DEF'; week: number; players: Streamer[]; onPlan?: (p: Player) => void }) {
+  if (!players.length) {
+    return (
+      <div className="rounded-md border border-stone-200 bg-white p-3 text-[12px] text-stone-500">
+        Week {week} — no lines posted yet, so there is nothing to rank on.
+      </div>
+    )
+  }
+  const basisLabel = pos === 'DEF' ? 'Opp implied' : 'Team implied'
+  return (
+    <div className="overflow-hidden rounded-md border border-stone-200 bg-white">
+      <div className="border-b border-stone-200 bg-stone-50 px-3 py-1.5 text-[11px] font-semibold text-stone-600">Week {week}</div>
+      <table className="w-full text-[12px]">
+        <thead>
+          <tr className="text-[10px] uppercase tracking-wide text-stone-400">
+            <th className="px-3 py-1 text-left font-medium">{pos === 'DEF' ? 'Defense' : 'Kicker'}</th>
+            <th className="px-2 py-1 text-left font-medium">Matchup</th>
+            <th className="px-2 py-1 text-right font-medium" title={pos === 'DEF' ? "Points the opponent is projected to score — lower is a better streaming spot" : "Points this kicker's own offense is projected to score — higher is better"}>{basisLabel}</th>
+            <th className="px-2 py-1 text-right font-medium">Own%</th>
+            <th className="w-8" />
+          </tr>
+        </thead>
+        <tbody>
+          {players.slice(0, 6).map((s, i) => (
+            <tr key={s.player_id} className={`border-t border-stone-100 ${i === 0 ? 'bg-emerald-50/60' : ''}`}>
+              <td className="px-3 py-1.5">
+                <span className="inline-flex items-center gap-1.5">
+                  {i === 0 && <span className="rounded bg-emerald-600 px-1 py-0.5 text-[9px] font-bold leading-none text-white">1</span>}
+                  <PlayerCell p={s} />
+                </span>
+              </td>
+              <td className="px-2 py-1.5 text-stone-600">{s.matchup ?? '—'}</td>
+              <td className="px-2 py-1.5 text-right tabular-nums">
+                <span className={s.stream_score >= 0.6 ? 'font-semibold text-emerald-700' : 'text-stone-700'}>{fmt(s.stream_basis, 1)}</span>
+              </td>
+              <td className="px-2 py-1.5 text-right text-stone-500">{pct(s.owned)}</td>
+              <td className="pr-2">
+                {onPlan && <button onClick={() => onPlan(s)} className="rounded border border-stone-300 px-1.5 py-0.5 text-[10px] text-stone-700 hover:border-amber-400 hover:bg-amber-50">+</button>}
+              </td>
+            </tr>
+          ))}
+        </tbody>
+      </table>
+    </div>
+  )
+}
+
+type Tab = 'targets' | 'stream' | 'browse'
+
 export default function Waivers() {
   const { leagueId, league, week, openPlan } = useApp()
+  // Deliberately not keyed on the app's week selector: a waiver claim always processes into the
+  // *upcoming* week, so the server decides which week that is rather than the lineup-view week.
   const { data, isLoading, error } = useQuery({
-    queryKey: ['waivers', leagueId, week],
-    queryFn: () => api.waivers(leagueId!, week),
+    queryKey: ['waivers', leagueId],
+    queryFn: () => api.waivers(leagueId!),
     enabled: !!leagueId,
     staleTime: 60_000,
   })
+  const [tab, setTab] = useState<Tab>('targets')
   const [pos, setPos] = useState('ALL')
   const [search, setSearch] = useState('')
   const [hideOut, setHideOut] = useState(false)
   const [relevantOnly, setRelevantOnly] = useState(true)
   const [fpOnly, setFpOnly] = useState(false)
+
+  // The week claims process into, and the week whose box score we are reading.
+  const targetWeek = data?.week ?? week
+  const lastWeek = Math.max(1, targetWeek - 1)
 
   const { rows, outCount, fpCount } = useMemo(() => {
     const s = search.trim().toLowerCase()
@@ -135,13 +320,29 @@ export default function Waivers() {
     }
   }, [data, pos, search, hideOut, relevantOnly, fpOnly])
 
-  const columns = useMemo(() => playerColumns({
-    week, rosEnd: data?.ros_end_week ?? 17, showRank: true, vsMine: true, espn: league?.platform === 'espn', fp: true, fpWaiver: true,
+  const targetRows = useMemo(() => {
+    const s = search.trim().toLowerCase()
+    return (data?.targets ?? []).filter((t) => {
+      if (pos === 'FLEX' ? !['RB', 'WR', 'TE'].includes(t.position) : pos !== 'ALL' && t.position !== pos) return false
+      if (hideOut && OUT_STATUSES.has(t.injury_status ?? '')) return false
+      if (s && !(t.name.toLowerCase().includes(s) || (t.team ?? '').toLowerCase() === s)) return false
+      return true
+    })
+  }, [data, pos, search, hideOut])
+
+  const browseColumns = useMemo(() => playerColumns({
+    week: targetWeek, rosEnd: data?.ros_end_week ?? 17, showRank: true, vsMine: true, espn: league?.platform === 'espn', fp: true, fpWaiver: true, usage: lastWeek,
     onPlan: (p) => leagueId && openPlan({ leagueId, add: p }),
-  }), [week, data?.ros_end_week, leagueId, openPlan, league?.platform])
+  }), [targetWeek, lastWeek, data?.ros_end_week, leagueId, openPlan, league?.platform])
+
+  const tgtColumns = useMemo(() => targetColumns({
+    week: targetWeek, lastWeek, usesFaab: data?.faab.uses_faab ?? false,
+    onPlan: (p) => leagueId && openPlan({ leagueId, add: p }),
+  }), [targetWeek, lastWeek, data?.faab.uses_faab, leagueId, openPlan])
 
   if (!league) return <Spinner />
   const t = league.my_team
+  const onPlan = (p: Player) => leagueId && openPlan({ leagueId, add: p })
 
   return (
     <div className="space-y-3">
@@ -157,24 +358,78 @@ export default function Waivers() {
           {league.waiver.bid_min > 0 && <Chip>Min bid ${league.waiver.bid_min}</Chip>}
           <Chip>{league.scoring_format}{league.pass_td ? ` · ${league.pass_td}pt pass TD` : ''}</Chip>
         </div>
-        <span className="ml-auto text-[12px] text-stone-500">{rows.length} of {data?.players.length ?? 0} free agents</span>
       </div>
 
       <div className="flex flex-wrap items-center gap-3">
         <div className="flex rounded-md border border-stone-200 bg-white p-0.5">
-          {POS_FILTERS.map((f) => (
-            <button key={f} onClick={() => setPos(f)} className={`rounded px-2.5 py-1 text-[12px] ${pos === f ? 'bg-stone-900 text-white' : 'text-stone-700 hover:bg-stone-100'}`}>{f}</button>
+          {([['targets', 'Claim targets'], ['stream', 'Streaming K/DST'], ['browse', 'Browse all']] as [Tab, string][]).map(([k, label]) => (
+            <button key={k} onClick={() => setTab(k)} className={`rounded px-3 py-1 text-[12px] ${tab === k ? 'bg-stone-900 text-white' : 'text-stone-700 hover:bg-stone-100'}`}>{label}</button>
           ))}
         </div>
-        <input value={search} onChange={(e) => setSearch(e.target.value)} placeholder="Search name or team…" className="w-56 rounded-md border border-stone-200 bg-white px-2.5 py-1 text-[12px]" />
-        <label className="flex items-center gap-1.5 text-[12px] text-stone-700"><input type="checkbox" checked={hideOut} onChange={(e) => setHideOut(e.target.checked)} /> Hide Out / IR{outCount > 0 && <span className={hideOut ? 'text-amber-700' : 'text-stone-400'}>({hideOut ? `${outCount} hidden` : outCount})</span>}</label>
-        <label className="flex items-center gap-1.5 text-[12px] text-stone-700" title="Hide players nobody rosters, adds, or projects"><input type="checkbox" checked={relevantOnly} onChange={(e) => setRelevantOnly(e.target.checked)} /> Relevant only</label>
-        <label className="flex items-center gap-1.5 text-[12px] text-stone-700" title="Only players on the FantasyPros waiver-wire list"><input type="checkbox" checked={fpOnly} onChange={(e) => setFpOnly(e.target.checked)} /> <span className="rounded bg-violet-100 px-1 py-0.5 text-[9.5px] font-bold leading-none text-violet-800">FP</span> picks{fpCount > 0 && <span className="text-stone-400">({fpCount})</span>}</label>
+        {tab !== 'stream' && (
+          <>
+            <div className="flex rounded-md border border-stone-200 bg-white p-0.5">
+              {POS_FILTERS.map((f) => (
+                <button key={f} onClick={() => setPos(f)} className={`rounded px-2.5 py-1 text-[12px] ${pos === f ? 'bg-stone-900 text-white' : 'text-stone-700 hover:bg-stone-100'}`}>{f}</button>
+              ))}
+            </div>
+            <input value={search} onChange={(e) => setSearch(e.target.value)} placeholder="Search name or team…" className="w-56 rounded-md border border-stone-200 bg-white px-2.5 py-1 text-[12px]" />
+            <label className="flex items-center gap-1.5 text-[12px] text-stone-700"><input type="checkbox" checked={hideOut} onChange={(e) => setHideOut(e.target.checked)} /> Hide Out / IR{outCount > 0 && <span className={hideOut ? 'text-amber-700' : 'text-stone-400'}>({hideOut ? `${outCount} hidden` : outCount})</span>}</label>
+          </>
+        )}
+        {tab === 'browse' && (
+          <>
+            <label className="flex items-center gap-1.5 text-[12px] text-stone-700" title="Hide players nobody rosters, adds, or projects"><input type="checkbox" checked={relevantOnly} onChange={(e) => setRelevantOnly(e.target.checked)} /> Relevant only</label>
+            <label className="flex items-center gap-1.5 text-[12px] text-stone-700" title="Only players on the FantasyPros waiver-wire list"><input type="checkbox" checked={fpOnly} onChange={(e) => setFpOnly(e.target.checked)} /> <span className="rounded bg-violet-100 px-1 py-0.5 text-[9.5px] font-bold leading-none text-violet-800">FP</span> picks{fpCount > 0 && <span className="text-stone-400">({fpCount})</span>}</label>
+          </>
+        )}
+        <span className="ml-auto text-[12px] text-stone-500">
+          {tab === 'targets' ? `${targetRows.length} ranked for week ${targetWeek}`
+            : tab === 'browse' ? `${rows.length} of ${data?.players.length ?? 0} free agents`
+              : `Weeks ${data?.stream_weeks?.join(', ') ?? targetWeek}`}
+        </span>
       </div>
 
-      {isLoading && <Spinner label="Building the waiver wire (projections, ownership, trends)…" />}
+      {isLoading && <Spinner label="Building the waiver wire (projections, usage, lines)…" />}
       {error && <ErrorBox error={error} />}
-      {data && <DataTable rows={rows} columns={columns} rowKey={(p) => p.player_id} initialSort={{ key: 'owned', dir: 'desc' }} rowClass={gameDayRowClass} />}
+
+      {data && tab === 'targets' && (
+        <div className="space-y-2">
+          <p className="text-[12px] text-stone-500">
+            Ranked for <span className="font-medium text-stone-700">week {targetWeek}</span> on expert consensus, week {lastWeek} opportunity, production, roster fit and market heat.
+            {data.faab.uses_faab && <> Bids are out of your <span className="font-medium text-stone-700">${data.faab.remaining}</span> remaining.</>}
+            {data.expert_sources?.length ? (
+              <> Columns read: {data.expert_sources.map((s, i) => (
+                <span key={s.id}>{i > 0 && ', '}<a href={s.url} target="_blank" rel="noreferrer" className="text-amber-800 underline decoration-dotted hover:text-amber-900">{s.name}</a>{s.partial && <span className="text-stone-400" title="Most of this column is paywalled"> (partial)</span>}</span>
+              ))}.</>
+            ) : null}
+          </p>
+          <DataTable rows={targetRows} columns={tgtColumns} rowKey={(t) => t.player_id} initialSort={{ key: 'rank', dir: 'asc' }} rowClass={gameDayRowClass} />
+        </div>
+      )}
+
+      {data && tab === 'stream' && (
+        <div className="space-y-4">
+          <p className="text-[12px] text-stone-500">
+            K and D/ST are matchup plays, so these rank on Vegas implied totals rather than season value — a defense against an offense projected to score little, a kicker on an offense projected to score a lot.
+            Looking ahead {data.stream_weeks.length} weeks lets you claim a good matchup before someone else does.
+          </p>
+          {(['DEF', 'K'] as const).map((p) => (
+            <div key={p} className="space-y-2">
+              <h2 className="text-[13px] font-semibold text-stone-800">{p === 'DEF' ? 'Defense / Special teams' : 'Kickers'}</h2>
+              <div className="grid gap-3 lg:grid-cols-3">
+                {(data.streamers[p] ?? []).map((w) => (
+                  <StreamTable key={w.week} pos={p} week={w.week} players={w.players} onPlan={onPlan} />
+                ))}
+              </div>
+            </div>
+          ))}
+        </div>
+      )}
+
+      {data && tab === 'browse' && (
+        <DataTable rows={rows} columns={browseColumns} rowKey={(p) => p.player_id} initialSort={{ key: 'owned', dir: 'desc' }} rowClass={gameDayRowClass} />
+      )}
     </div>
   )
 }
