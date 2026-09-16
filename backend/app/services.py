@@ -15,7 +15,7 @@ from .espn import Espn, normalize_league as espn_normalize_league, normalize_poo
     normalize_transactions as espn_normalize_transactions, stat_id as espn_stat_id
 from .yahoo import Yahoo, normalize_league as yahoo_normalize_league, normalize_pool as yahoo_normalize_pool, \
     normalize_transactions as yahoo_normalize_transactions
-from .ids import Crosswalk, load_nflverse_ids, normalize_name
+from .ids import Crosswalk, load_nflverse_ids
 from .lineup import optimal_lineup, starting_slots
 from .scoring import score
 from .sleeper import Sleeper
@@ -335,25 +335,10 @@ class Service:
             self._expert_stamp = stamp
         return self._expert_raw
 
-    async def _expert_map(self, season: str, week: int) -> dict[str, dict]:
-        data = self._expert()
-        if not data:
-            return {}
-        xw = await self._crosswalk()
-
-        def resolve(name: str | None, pos: str | None, team: str | None) -> str | None:
-            if pos == "DEF":
-                return team if team in xw.players else None
-            if not name or not pos:
-                return None
-            cands = xw.by_name.get((normalize_name(name), pos), [])
-            if len(cands) == 1:
-                return cands[0]
-            for pid in cands:  # same name at the same position: break the tie on team
-                if (xw.players.get(pid) or {}).get("team") == team:
-                    return pid
-            return None
-        return wv.expert_index(data, resolve, season, week)
+    def _articles(self, season: str, week: int) -> dict | None:
+        """This week's waiver-column summary. Shown as its own block, never mixed into the
+        ranked table — that table is numbers only."""
+        return wv.article_digest(self._expert(), season, week)
 
     async def _trending_maps(self) -> dict[str, dict[str, int]]:
         a24, a168, d24, d168 = await asyncio.gather(
@@ -731,7 +716,6 @@ class Service:
             r["vs_mine"] = round((r.get("proj_ros") or 0.0) - base, 1) if base is not None and r.get("proj_ros") is not None else None
 
         season = str(b["league"]["season"])
-        expert = await self._expert_map(season, week)
         _, fp_idx = self._fp()
         waiver_pool_size = len(fp_idx.get("waiver") or {}) or 50
 
@@ -742,7 +726,6 @@ class Service:
         bid_min = int(faab.get("bid_min") or 0)
 
         for r in free:
-            r["expert"] = expert.get(r["player_id"])
             sc = wv.score_target(r, waiver_pool_size)
             r["target_score"] = sc["score"]
             r["score_parts"] = sc["components"]
@@ -786,7 +769,7 @@ class Service:
             "targets": targets,
             "streamers": streamers,
             "stream_weeks": odds_weeks,
-            "expert_sources": (self._expert() or {}).get("sources") if expert else None,
+            "articles": self._articles(season, week),
             "players": free,
         }
 

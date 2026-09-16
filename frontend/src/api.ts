@@ -139,13 +139,22 @@ export interface Usage {
   lw_volume?: number | null
 }
 
-export interface ExpertNote {
+/** One recommendation lifted from this week's waiver columns. Opinion, kept out of the ranked
+ * table and shown in its own block. */
+export interface ArticleItem {
+  name: string
+  position: string | null
+  team: string | null
   action: 'add' | 'buy' | 'sell' | 'hold'
-  sources: string[]
   faab: string | null
   priority: string | null
   note: string | null
+  sources: string[]
 }
+
+export interface ArticleSource { id: string; name: string; url: string; partial?: boolean; partial_note?: string }
+
+export interface ArticleDigest { week: number; sources: ArticleSource[]; items: ArticleItem[] }
 
 export interface Bid { min: number; rec: number; max: number; pct: number; note?: string }
 
@@ -155,11 +164,10 @@ export type Tier = 'A' | 'B' | 'C' | 'D'
 export interface Target extends Player {
   rank: number
   target_score: number
-  score_parts: { expert: number; opportunity: number; production: number; fit: number; market: number }
+  score_parts: { fantasypros: number; production: number; opportunity: number }
   tier: Tier
   tier_label: string
   bid: Bid | null
-  expert: ExpertNote | null
 }
 
 /** A K or D/ST ranked for one specific week on Vegas implied totals. */
@@ -182,7 +190,7 @@ export interface WaiversResponse {
   targets: Target[]
   streamers: { DEF: StreamWeek[]; K: StreamWeek[] }
   stream_weeks: number[]
-  expert_sources: { id: string; name: string; url: string; partial?: boolean }[] | null
+  articles: ArticleDigest | null
   players: Player[]
 }
 

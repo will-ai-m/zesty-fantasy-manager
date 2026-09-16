@@ -1,6 +1,6 @@
 import { useMemo, useState } from 'react'
 import { useQuery } from '@tanstack/react-query'
-import { api, type Player, type Streamer, type Target, type Tier } from '../api'
+import { api, type ArticleDigest, type ArticleItem, type Player, type Streamer, type Target, type Tier } from '../api'
 import { fmt, fmtInt, gameDayRowClass, OUT_STATUSES, pct, POS_ORDER, shortDate } from '../lib/format'
 import { useApp } from '../components/AppContext'
 import { Chip, ErrorBox, LeagueBar, PlatformBadge, PlayerCell, Pos, Spinner } from '../components/Badges'
@@ -31,19 +31,14 @@ function usageColumns(lastWeek: number): Column<Player>[] {
       sort: (p) => p.lw_snap_pct, align: 'right', desc: true,
     },
     {
-      key: 'lw_volume', header: 'Tgt/Car', title: `Week ${lastWeek} targets and carries. Volume is the input; points are the output.`,
-      render: (p) => {
-        const t = p.lw_targets ?? 0, c = p.lw_carries ?? 0
-        if (!t && !c) return <span className="text-stone-300">·</span>
-        return (
-          <span>
-            {t ? <span className="font-medium text-sky-800">{t}</span> : <span className="text-stone-300">0</span>}
-            <span className="mx-0.5 text-stone-300">/</span>
-            {c ? <span className="font-medium text-amber-800">{c}</span> : <span className="text-stone-300">0</span>}
-          </span>
-        )
-      },
-      sort: (p) => (p.lw_targets ?? 0) + (p.lw_carries ?? 0), align: 'right', desc: true,
+      key: 'lw_targets', header: 'Tgt', title: `Times targeted in the passing game in week ${lastWeek}`,
+      render: (p) => p.lw_targets ? <span className="font-medium text-sky-800">{p.lw_targets}</span> : <span className="text-stone-300">·</span>,
+      sort: (p) => p.lw_targets, align: 'right', desc: true,
+    },
+    {
+      key: 'lw_carries', header: 'Car', title: `Rushing attempts in week ${lastWeek}`,
+      render: (p) => p.lw_carries ? <span className="font-medium text-amber-800">{p.lw_carries}</span> : <span className="text-stone-300">·</span>,
+      sort: (p) => p.lw_carries, align: 'right', desc: true,
     },
     {
       key: 'last_week_pts', header: `Wk ${lastWeek}`, title: `Fantasy points scored in week ${lastWeek} under this league's scoring`,
@@ -156,19 +151,7 @@ function targetColumns(opts: { week: number; lastWeek: number; usesFaab: boolean
       sort: (t) => t.tier, align: 'center',
     },
     {
-      key: 'name', header: 'Player',
-      render: (t) => (
-        <span className="inline-flex items-center gap-1.5">
-          <PlayerCell p={t} />
-          {t.expert && (
-            <span
-              title={`${t.expert.sources.join(', ')}${t.expert.faab ? ` · suggests ${t.expert.faab}` : ''}${t.expert.note ? `\n\n${t.expert.note}` : ''}`}
-              className={`rounded px-1 py-0.5 text-[9.5px] font-bold leading-none ${t.expert.action === 'sell' ? 'bg-red-100 text-red-800' : 'bg-amber-100 text-amber-900'}`}
-            >{t.expert.action === 'sell' ? 'SELL' : 'COL'}</span>
-          )}
-        </span>
-      ),
-      sort: (t) => t.name,
+      key: 'name', header: 'Player', render: (t) => <PlayerCell p={t} />, sort: (t) => t.name,
     },
     { key: 'pos', header: 'Pos', render: (t) => <Pos pos={t.position} />, sort: (t) => POS_ORDER.indexOf(t.position), align: 'center' },
     { key: 'opp', header: `Wk ${opts.week}`, title: 'Opponent the week you are claiming into', render: (t) => <span className={t.on_bye ? 'text-stone-400' : ''}>{t.on_bye ? 'BYE' : t.opponent ?? '—'}</span>, sort: (t) => t.opponent },
@@ -190,35 +173,19 @@ function targetColumns(opts: { week: number; lastWeek: number; usesFaab: boolean
     })
   }
   cols.push(
+    {
+      key: 'fp_waiver', header: 'FP rank', title: "FantasyPros' waiver-wire rank — a shortlist of ~50 players their experts think are worth adding at all. This is half the ranking; a dot means they did not make the list.",
+      render: (t) => t.fp_waiver_rank == null
+        ? <span className="text-stone-300">·</span>
+        : <span className="font-semibold text-violet-800">{t.fp_waiver_rank}<span className="ml-1 text-[10px] font-normal text-violet-500">{t.fp_waiver_pos_rank}</span></span>,
+      sort: (t) => t.fp_waiver_rank ?? 9999, align: 'right',
+    },
     ...(usageColumns(opts.lastWeek) as unknown as Column<Target>[]),
     {
-      key: 'why', header: 'Why', title: 'What drives the ranking: E expert consensus · O opportunity (snaps/volume) · P production · F fit with your roster · M market heat',
-      render: (t) => {
-        const parts: [string, number, string][] = [
-          ['E', t.score_parts.expert, 'Expert consensus'],
-          ['O', t.score_parts.opportunity, 'Opportunity (snaps, volume)'],
-          ['P', t.score_parts.production, 'Production last week'],
-          ['F', t.score_parts.fit, 'Fit vs your weakest starter'],
-          ['M', t.score_parts.market, 'Market heat (adds)'],
-        ]
-        return (
-          <span className="inline-flex gap-0.5" title={parts.map(([l, v, d]) => `${d}: ${Math.round(v * 100)}`).join('\n')}>
-            {parts.map(([label, v]) => (
-              <span key={label} className={`w-4 rounded text-center text-[9px] font-bold leading-[14px] ${v >= 0.66 ? 'bg-emerald-600 text-white' : v >= 0.33 ? 'bg-emerald-100 text-emerald-900' : 'bg-stone-100 text-stone-400'}`}>{label}</span>
-            ))}
-          </span>
-        )
-      },
-      sort: (t) => t.target_score, align: 'center', desc: true,
+      key: 'proj_week', header: `Wk ${opts.week} proj`, title: `Projected points for week ${opts.week}, under this league's scoring`,
+      render: (t) => fmt(t.proj_week), sort: (t) => t.proj_week, align: 'right', desc: true,
     },
-    { key: 'proj_week', header: 'Proj', title: 'Projected points the week you are claiming into', render: (t) => fmt(t.proj_week), sort: (t) => t.proj_week, align: 'right', desc: true },
-    { key: 'proj_ros', header: 'ROS', title: 'Rest-of-season projected points', render: (t) => <span className="font-medium">{fmt(t.proj_ros, 0)}</span>, sort: (t) => t.proj_ros, align: 'right', desc: true },
-    {
-      key: 'vs_mine', header: 'vs mine', title: 'Rest-of-season projection minus your weakest starter at the spot. Positive = an upgrade.',
-      render: (t) => t.vs_mine == null ? <span className="text-stone-400">—</span> : <span className={t.vs_mine > 0 ? 'font-semibold text-emerald-700' : 'text-stone-400'}>{t.vs_mine > 0 ? '+' : ''}{fmt(t.vs_mine, 0)}</span>,
-      sort: (t) => t.vs_mine, align: 'right', desc: true,
-    },
-    { key: 'owned', header: 'Own%', render: (t) => pct(t.owned), sort: (t) => t.owned, align: 'right', desc: true },
+    { key: 'owned', header: 'Own%', title: 'Percent of Sleeper leagues rostering this player', render: (t) => pct(t.owned), sort: (t) => t.owned, align: 'right', desc: true },
   )
   if (opts.onPlan) {
     cols.push({
@@ -228,6 +195,55 @@ function targetColumns(opts: { week: number; lastWeek: number; usesFaab: boolean
     })
   }
   return cols
+}
+
+/** This week's waiver columns, summarised. Deliberately separate from the ranked table: that
+ * table is numbers, this is somebody's opinion, and mixing the two makes it unclear which is
+ * which. Sell/hold calls are commentary rather than claims, so they sit in their own group. */
+function ArticleBlock({ digest }: { digest: ArticleDigest }) {
+  const [open, setOpen] = useState(true)
+  const adds = digest.items.filter((i) => i.action === 'add' || i.action === 'buy')
+  const other = digest.items.filter((i) => i.action === 'sell' || i.action === 'hold')
+
+  const Item = ({ i }: { i: ArticleItem }) => (
+    <li className="flex gap-2 leading-snug">
+      <span className={`mt-[7px] h-1 w-1 shrink-0 rounded-full ${i.action === 'sell' ? 'bg-red-400' : 'bg-amber-500'}`} />
+      <span>
+        <span className="font-semibold text-stone-800">{i.name}</span>
+        <span className="ml-1 text-[11px] text-stone-500">{i.position}{i.team ? ` · ${i.team}` : ''}</span>
+        {i.action === 'buy' && <span className="ml-1.5 rounded bg-sky-100 px-1 py-0.5 text-[9.5px] font-bold leading-none text-sky-800">BUY LOW</span>}
+        {i.action === 'sell' && <span className="ml-1.5 rounded bg-red-100 px-1 py-0.5 text-[9.5px] font-bold leading-none text-red-800">SELL HIGH</span>}
+        {i.action === 'hold' && <span className="ml-1.5 rounded bg-stone-100 px-1 py-0.5 text-[9.5px] font-bold leading-none text-stone-600">HOLD</span>}
+        {i.faab && <span className="ml-1.5 rounded bg-emerald-100 px-1 py-0.5 text-[9.5px] font-bold leading-none text-emerald-800">{i.faab} FAAB</span>}
+        {i.priority === 'low' && <span className="ml-1.5 text-[10px] text-stone-400">low priority</span>}
+        {i.note && <span className="text-stone-600"> — {i.note}</span>}
+        <span className="ml-1 text-[10px] text-stone-400">({i.sources.join(', ')})</span>
+      </span>
+    </li>
+  )
+
+  return (
+    <section className="rounded-md border border-amber-200 bg-amber-50/50">
+      <button onClick={() => setOpen(!open)} className="flex w-full items-center gap-2 px-3 py-2 text-left">
+        <span className="text-[13px] font-semibold text-stone-800">What the columns are saying this week</span>
+        <span className="text-[11px] text-stone-500">
+          {digest.sources.map((src, n) => (
+            <span key={src.id}>{n > 0 && ' · '}<a href={src.url} target="_blank" rel="noreferrer" onClick={(e) => e.stopPropagation()} className="underline decoration-dotted hover:text-amber-900">{src.name}</a>{src.partial && <span title={src.partial_note ?? 'Partly paywalled'}> (partial)</span>}</span>
+          ))}
+        </span>
+        <span className="ml-auto text-[11px] text-stone-400">{open ? 'hide' : `show ${digest.items.length}`}</span>
+      </button>
+      {open && (
+        <div className="space-y-3 px-3 pb-3">
+          <ul className="space-y-1.5 text-[12px]">{adds.map((i) => <Item key={i.name} i={i} />)}</ul>
+          {other.length > 0 && (
+            <ul className="space-y-1.5 border-t border-amber-200 pt-2 text-[12px]">{other.map((i) => <Item key={i.name} i={i} />)}</ul>
+          )}
+          <p className="text-[11px] text-stone-500">Opinion, not part of the ranking — the table above is numbers only.</p>
+        </div>
+      )}
+    </section>
+  )
 }
 
 /** One week's streaming shortlist for K or D/ST. */
@@ -395,14 +411,10 @@ export default function Waivers() {
 
       {data && tab === 'targets' && (
         <div className="space-y-2">
+          {data.articles && <ArticleBlock digest={data.articles} />}
           <p className="text-[12px] text-stone-500">
-            Ranked for <span className="font-medium text-stone-700">week {targetWeek}</span> on expert consensus, week {lastWeek} opportunity, production, roster fit and market heat.
+            Ranked for <span className="font-medium text-stone-700">week {targetWeek}</span> on FantasyPros' waiver rank (half the weight), week {lastWeek} points, and week {lastWeek} snap share.
             {data.faab.uses_faab && <> Bids are out of your <span className="font-medium text-stone-700">${data.faab.remaining}</span> remaining.</>}
-            {data.expert_sources?.length ? (
-              <> Columns read: {data.expert_sources.map((s, i) => (
-                <span key={s.id}>{i > 0 && ', '}<a href={s.url} target="_blank" rel="noreferrer" className="text-amber-800 underline decoration-dotted hover:text-amber-900">{s.name}</a>{s.partial && <span className="text-stone-400" title="Most of this column is paywalled"> (partial)</span>}</span>
-              ))}.</>
-            ) : null}
           </p>
           <DataTable rows={targetRows} columns={tgtColumns} rowKey={(t) => t.player_id} initialSort={{ key: 'rank', dir: 'asc' }} rowClass={gameDayRowClass} />
         </div>

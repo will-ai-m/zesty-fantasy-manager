@@ -2,10 +2,10 @@
 
 The waiver page answers two different questions, so this module computes two different things.
 
-**Claim targets** blend four signals into one score. No single one is trustworthy alone: expert
-consensus lags a breakout by a week, last week's box score overstates a touchdown fluke, and
-opportunity (snaps, targets, carries) leads production but doesn't guarantee it. Roster fit
-matters too — the best available player is worthless if he's behind two starters you already own.
+**Claim targets** rank on three numbers, nothing else: where FantasyPros' experts rank the player,
+what he scored last week, and how much he was actually on the field. None is trustworthy alone —
+consensus lags a breakout by a week, one box score overstates a touchdown fluke, and snaps lead
+production without guaranteeing it — so the score is a weighted blend of the three.
 
 **Streamers** are a different question entirely. K and D/ST are matchup plays with almost no
 week-to-week carryover, so they rank on Vegas implied totals rather than season-long value:
@@ -14,13 +14,13 @@ if his own offence is projected to score a lot.
 """
 from __future__ import annotations
 
-import math
 from typing import Any
 
-# Blend weights for the claim-target score. Expert consensus carries the most weight because it
-# already folds in film and beat reporting we can't see; opportunity is next because it leads
-# production. Market (what everyone else is adding) is a tiebreak, not a thesis.
-WEIGHTS = {"expert": 0.35, "opportunity": 0.25, "production": 0.15, "fit": 0.15, "market": 0.10}
+# Blend weights. FantasyPros carries half the weight because its waiver list is a hand-picked
+# shortlist of players worth adding at all — it is what keeps a backup QB with gaudy snap counts
+# from outranking a genuine starter. The other half splits evenly between what the player actually
+# did last week and how much he was on the field for it.
+WEIGHTS = {"fantasypros": 0.50, "production": 0.25, "opportunity": 0.25}
 
 # Tier cutoffs on the blended score, and the FAAB each tier is worth as a percentage of the
 # budget you have LEFT (not the original budget — late-season dollars are scarcer).
@@ -48,7 +48,7 @@ def _clamp(x: float, lo: float = 0.0, hi: float = 1.0) -> float:
     return max(lo, min(hi, x))
 
 
-def _expert_score(row: dict, waiver_pool_size: int) -> float:
+def _fantasypros_score(row: dict, waiver_pool_size: int) -> float:
     """FantasyPros' waiver-wire page is a short, hand-picked shortlist (~50 players), so simply
     appearing on it is most of the signal; rank within it refines. Players absent from it fall
     back to their rest-of-season positional rank, worth much less."""
@@ -88,45 +88,15 @@ def _production_score(row: dict) -> float:
     return _clamp(float(pts) / BIG_WEEK.get(row.get("position") or "", 14.0))
 
 
-def _fit_score(row: dict) -> float:
-    """How much better, rest-of-season, than the weakest player you already roster at the spot.
-    Negative (a downgrade) floors at zero rather than going negative, so fit can only add."""
-    vs = row.get("vs_mine")
-    if vs is None:
-        return 0.0
-    return _clamp(float(vs) / 40.0)
-
-
-def _market_score(row: dict) -> float:
-    """Sleeper adds in the last 24h, log-scaled — the difference between 10 and 100 adds matters
-    much more than between 5,000 and 50,000."""
-    adds = row.get("adds_24h") or 0
-    if adds <= 0:
-        return 0.0
-    return _clamp(math.log10(float(adds) + 1) / 4.5)
-
-
-def _downgrade_penalty(row: dict) -> float:
-    """Scale the score down for a player projected *below* the weakest starter you already have
-    at the spot. Snaps and a loud box score can otherwise float a backup QB into the priority
-    tiers, but a player you would never actually start is not a claim at any price."""
-    vs = row.get("vs_mine")
-    if vs is None or vs >= 0:
-        return 1.0
-    return _clamp(1.0 + float(vs) / 120.0, 0.45, 1.0)
-
-
 def score_target(row: dict, waiver_pool_size: int) -> dict[str, Any]:
-    """Blended 0..1 score for one free agent, with its components kept visible so the table can
-    show *why* a player is ranked where he is."""
+    """Blended 0..1 score for one free agent from its three inputs, each of which is also shown
+    as its own column in the table so the ranking can be checked by eye."""
     comps = {
-        "expert": _expert_score(row, waiver_pool_size),
-        "opportunity": _opportunity_score(row),
+        "fantasypros": _fantasypros_score(row, waiver_pool_size),
         "production": _production_score(row),
-        "fit": _fit_score(row),
-        "market": _market_score(row),
+        "opportunity": _opportunity_score(row),
     }
-    total = sum(comps[k] * w for k, w in WEIGHTS.items()) * _downgrade_penalty(row)
+    total = sum(comps[k] * w for k, w in WEIGHTS.items())
     return {"score": round(total, 4), "components": {k: round(v, 3) for k, v in comps.items()}}
 
 
@@ -183,28 +153,31 @@ def load_expert(data_dir) -> dict | None:
         return None
 
 
-def expert_index(data: dict | None, resolve, season: str, week: int) -> dict[str, dict]:
-    """{player_id: note} for this week only.
+def article_digest(data: dict | None, season: str, week: int) -> dict | None:
+    """This week's waiver columns as a readable list, kept deliberately separate from the ranked
+    table: the table is numbers only, and these are somebody's opinion, which is a different kind
+    of claim and belongs in its own block.
 
-    Waiver columns are week-specific advice, so a file left over from an earlier week is ignored
-    rather than shown as if it were current — stale "add this guy" is worse than no advice.
+    Columns are week-specific advice, so a file left over from an earlier week is dropped rather
+    than shown as if it were current — stale "add this guy" is worse than no advice at all.
     """
     if not data or str(data.get("season")) != str(season) or int(data.get("week") or 0) != int(week):
-        return {}
+        return None
     names = {s["id"]: s.get("name", s["id"]) for s in data.get("sources", [])}
-    out: dict[str, dict] = {}
-    for p in data.get("players", []):
-        pid = resolve(p.get("name"), p.get("position"), p.get("team"))
-        if not pid:
-            continue
-        out[pid] = {
-            "action": p.get("action", "add"),
-            "sources": [names.get(s, s) for s in p.get("sources", [])],
-            "faab": p.get("faab"),
-            "priority": p.get("priority"),
-            "note": p.get("note"),
-        }
-    return out
+    items = [{
+        "name": p.get("name"),
+        "position": p.get("position"),
+        "team": p.get("team"),
+        "action": p.get("action", "add"),
+        "faab": p.get("faab"),
+        "priority": p.get("priority"),
+        "note": p.get("note"),
+        "sources": [names.get(x, x) for x in p.get("sources", [])],
+    } for p in data.get("players", [])]
+    # Adds first, then the buy-low/sell/hold calls, which are commentary rather than claims.
+    order = {"add": 0, "buy": 1, "hold": 2, "sell": 3}
+    items.sort(key=lambda i: (order.get(i["action"], 9), i["priority"] == "low"))
+    return {"week": week, "sources": data.get("sources", []), "items": items}
 
 
 # --------------------------------------------------------------------------- streaming
