@@ -106,11 +106,6 @@ async def games(
     )
 
 
-@app.get("/api/trends")
-async def trends():
-    return await svc().trends()
-
-
 @app.get("/api/my-players")
 async def my_players(week: int | None = Query(default=None, ge=1, le=18)):
     return await svc().my_players(week)

@@ -181,6 +181,9 @@ export interface WaiversResponse {
   by_fantasypros: Target[]
   by_points: Target[]
   by_usage: Target[]
+  /** Sleeper's league-wide add/drop counts. Null for ESPN and Yahoo leagues, whose managers
+   * are a different population than the one these counts describe. */
+  by_trending: Target[] | null
   streamers: { DEF: StreamWeek[]; K: StreamWeek[] }
   stream_weeks: number[]
   articles: ArticleDigest | null
@@ -231,19 +234,6 @@ export interface Transaction {
   faab_moved: unknown[]
 }
 export interface TransactionsResponse { league: LeagueSummary; weeks: number[]; transactions: Transaction[] }
-
-export interface LeagueStatus {
-  league_id: string
-  league_name: string
-  status: 'free' | 'mine' | 'owned'
-  owner: string | null
-  proj_week: number | null
-  proj_ros: number | null
-  platform_status?: string | null
-  waiver_until?: number | null
-}
-export interface TrendPlayer extends Player { leagues: LeagueStatus[] }
-export interface TrendsResponse { week: number; leagues: { league_id: string; name: string; platform?: Platform }[]; adds: TrendPlayer[]; drops: TrendPlayer[] }
 
 export interface MyPlayer extends Player {
   leagues: { league_id: string; league_name: string; role: string; proj_week: number | null; proj_ros: number | null }[]
@@ -351,7 +341,6 @@ export const api = {
   roster: (leagueId: string, week?: number) => http<RosterResponse>(`/api/leagues/${leagueId}/roster${q({ week })}`),
   rosters: (leagueId: string, week?: number) => http<RostersResponse>(`/api/leagues/${leagueId}/rosters${q({ week })}`),
   transactions: (leagueId: string, weeks = 3) => http<TransactionsResponse>(`/api/leagues/${leagueId}/transactions${q({ weeks })}`),
-  trends: () => http<TrendsResponse>('/api/trends'),
   games: (week?: number) => http<GamesResponse>(`/api/games${q({ week })}`),
   myPlayers: (week?: number) => http<MyPlayersResponse>(`/api/my-players${q({ week })}`),
   player: (playerId: string, leagueId?: string | null) => http<PlayerDetail>(`/api/players/${playerId}${q({ league_id: leagueId })}`),

@@ -63,7 +63,7 @@ export default function Planner() {
               <button onClick={() => openPlan({ leagueId: lg.league_id })} className="ml-auto rounded border border-stone-300 px-2 py-0.5 text-[11px] hover:bg-stone-50">+ Drop-only plan</button>
             </div>
             {mine.length === 0 ? (
-              <div className="px-3 py-3 text-[12px] text-stone-500">No planned moves. Use “Plan” on the Waivers or Trends page.</div>
+              <div className="px-3 py-3 text-[12px] text-stone-500">No planned moves. Use “Plan” on the Waivers page.</div>
             ) : (
               <table className="data w-full">
                 <thead><tr><th>Add</th><th>Drop</th>{isFaab && <th className="text-right">Bid</th>}<th>Note</th><th>Status</th><th>Updated</th><th></th></tr></thead>

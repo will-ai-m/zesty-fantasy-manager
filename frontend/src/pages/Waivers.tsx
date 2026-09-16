@@ -101,7 +101,7 @@ export function playerColumns(opts: { week: number; rosEnd: number; onPlan?: (p:
       { key: 'platform_status', header: 'Avail', title: 'ESPN availability: free agent, or on waivers until the shown time', render: (p: Player) => p.platform_status === 'WAIVERS' ? <span className="text-amber-700" title={p.waiver_until ? `On waivers until ${shortDate(p.waiver_until)}` : 'On waivers'}>Waivers{p.waiver_until ? ` · ${shortDate(p.waiver_until)}` : ''}</span> : p.platform_status === 'FREEAGENT' ? <span className="text-emerald-700">FA</span> : <span className="text-stone-400">—</span>, sort: (p: Player) => p.platform_status === 'FREEAGENT' ? 0 : p.platform_status === 'WAIVERS' ? 1 : 2 },
     ] : []),
     ...(market ? [{
-      key: 'adds_24h', header: '+24h', title: 'Adds across Sleeper, last 24h. Longer windows and drops live on the Trends page.',
+      key: 'adds_24h', header: '+24h', title: 'Adds across Sleeper, last 24h.',
       render: (p: Player) => <span className={p.adds_24h > 0 ? 'text-emerald-700 font-medium' : 'text-stone-400'}>{p.adds_24h ? fmtInt(p.adds_24h) : '·'}</span>,
       sort: (p: Player) => p.adds_24h, align: 'right' as const, desc: true,
     }] : []),
@@ -137,7 +137,7 @@ export function playerColumns(opts: { week: number; rosEnd: number; onPlan?: (p:
 /** Columns shared by the three panels. Each panel leads with the number it is ranked on, then
  * carries the other two so a player can be checked against the signals he *didn't* rank for —
  * a name high on the expert list with no snaps behind it is the interesting case. */
-function panelColumns(kind: 'fp' | 'points' | 'usage', opts: { week: number; lastWeek: number; onPlan?: (p: Player) => void }): Column<Target>[] {
+function panelColumns(kind: 'fp' | 'points' | 'usage' | 'trending', opts: { week: number; lastWeek: number; onPlan?: (p: Player) => void }): Column<Target>[] {
   const fpRank: Column<Target> = {
     key: 'fp_waiver', header: 'FP', title: "Rank on FantasyPros' waiver-wire shortlist (10 experts, ~50 players)",
     render: (t) => t.fp_waiver_rank == null
@@ -183,10 +183,27 @@ function panelColumns(kind: 'fp' | 'points' | 'usage', opts: { week: number; las
       : <span className={t.usage_score >= 0.85 ? 'font-semibold text-emerald-700' : 'text-stone-700'}>{Math.round(t.usage_score * 100)}</span>,
     sort: (t) => t.usage_score, align: 'right', desc: true,
   }
-  const lead = kind === 'fp' ? [fpRank] : kind === 'points' ? [points] : [usage, snap, tgt, car]
+  const adds: Column<Target> = {
+    key: 'adds_24h', header: 'Adds 24h', title: 'Times added across all Sleeper leagues in the last 24 hours',
+    render: (t) => t.adds_24h ? <span className="font-semibold text-emerald-700">{fmtInt(t.adds_24h)}</span> : <span className="text-stone-300">·</span>,
+    sort: (t) => t.adds_24h, align: 'right', desc: true,
+  }
+  const adds7: Column<Target> = {
+    key: 'adds_7d', header: '7d', title: 'Adds across Sleeper over the last 7 days — a slower read than the 24h spike',
+    render: (t) => t.adds_7d ? <span className="text-stone-600">{fmtInt(t.adds_7d)}</span> : <span className="text-stone-300">·</span>,
+    sort: (t) => t.adds_7d, align: 'right', desc: true,
+  }
+  const drops: Column<Target> = {
+    key: 'drops_24h', header: 'Drops 24h', title: 'Times dropped across all Sleeper leagues in the last 24 hours',
+    render: (t) => t.drops_24h ? <span className="font-medium text-red-700">{fmtInt(t.drops_24h)}</span> : <span className="text-stone-300">·</span>,
+    sort: (t) => t.drops_24h, align: 'right', desc: true,
+  }
+  const lead = kind === 'fp' ? [fpRank] : kind === 'points' ? [points]
+    : kind === 'trending' ? [adds, adds7, drops] : [usage, snap, tgt, car]
   const rest = kind === 'fp' ? [points, snap, tgt, car]
     : kind === 'points' ? [fpRank, snap, tgt, car]
-      : [fpRank, points]
+      : kind === 'trending' ? [fpRank, points, snap, tgt, car]
+        : [fpRank, points]
   const cols: Column<Target>[] = [...lead, ...identity, ...rest,
     { key: 'proj_week', header: `Wk ${opts.week} proj`, title: `Projected points for week ${opts.week}, in this league's scoring`, render: (t) => fmt(t.proj_week), sort: (t) => t.proj_week, align: 'right', desc: true },
     { key: 'owned', header: 'Own%', title: 'Percent of Sleeper leagues rostering this player', render: (t) => pct(t.owned), sort: (t) => t.owned, align: 'right', desc: true },
@@ -366,6 +383,7 @@ export default function Waivers() {
       fp: (data?.by_fantasypros ?? []).filter(keep),
       points: (data?.by_points ?? []).filter(keep),
       usage: (data?.by_usage ?? []).filter(keep),
+      trending: (data?.by_trending ?? []).filter(keep),
     }
   }, [data, pos, search, hideOut])
 
@@ -380,6 +398,7 @@ export default function Waivers() {
   const fpCols = useMemo(() => panelColumns('fp', colOpts), [colOpts])
   const ptsCols = useMemo(() => panelColumns('points', colOpts), [colOpts])
   const useCols = useMemo(() => panelColumns('usage', colOpts), [colOpts])
+  const trendCols = useMemo(() => panelColumns('trending', colOpts), [colOpts])
 
   if (!league) return <Spinner />
   const t = league.my_team
@@ -452,6 +471,13 @@ export default function Waivers() {
               blurb={`Week ${lastWeek} usage — targets for receivers and tight ends, carries for backs, each ranked against others at the same position. Leads scoring, so it catches a role change before the points show up. Quarterbacks excluded.`}
               empty="No usage recorded for available players last week."
             />
+            {data.by_trending && (
+              <Panel
+                title="Sleeper adds and drops" sortKey="adds_24h" rows={panels.trending} columns={trendCols}
+                blurb="What every Sleeper manager is doing right now, league-wide. The fastest signal of the four and the noisiest — it moves on news before the box score or the experts catch up, and it moves just as hard on hype."
+                empty="Nobody available is trending on Sleeper."
+              />
+            )}
           </div>
           {data.articles && <ArticleBlock digest={data.articles} />}
         </div>

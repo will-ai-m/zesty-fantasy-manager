@@ -728,6 +728,13 @@ class Service:
         by_points = sorted(
             [r for r in pool if r.get("last_week_pts") is not None], key=lambda r: -r["last_week_pts"])
         by_usage = wv.rank_by_usage(pool)
+        # Sleeper publishes league-wide add/drop counts. They describe the Sleeper player pool, so
+        # they are only shown for Sleeper leagues — on an ESPN or Yahoo league the same numbers
+        # would be describing a different set of managers making different decisions.
+        by_trending = sorted(
+            [r for r in pool if (r.get("adds_24h") or 0) > 0 or (r.get("drops_24h") or 0) > 0],
+            key=lambda r: -(r.get("adds_24h") or 0),
+        ) if lg.get("platform") == "sleeper" else None
 
         odds_weeks = [w for w in range(week, min(REGULAR_SEASON_WEEKS, week + 2) + 1)]
         odds_by_week = dict(zip(odds_weeks, await asyncio.gather(*(self._team_odds(season, w) for w in odds_weeks))))
@@ -746,6 +753,7 @@ class Service:
             "by_fantasypros": by_fantasypros[:40],
             "by_points": by_points[:40],
             "by_usage": by_usage[:40],
+            "by_trending": by_trending[:40] if by_trending is not None else None,
             "streamers": streamers,
             "stream_weeks": odds_weeks,
             "articles": self._articles(season, week),
@@ -913,52 +921,6 @@ class Service:
     async def _all_bundles(self, me: dict) -> list[dict]:
         ids = [lg["league_id"] for lg in me["leagues"] if not lg.get("error")]
         return list(await asyncio.gather(*(self._league_bundle(lid, me["user"]["user_id"]) for lid in ids)))
-
-    async def trends(self) -> dict:
-        me = await self.me()
-        week = me["state"]["current_week"]
-        bundles = await self._all_bundles(me)
-        ctxs = await asyncio.gather(*(self._week_context(b, week) for b in bundles))
-        if not ctxs:
-            return {"week": week, "leagues": [], "adds": [], "drops": []}
-        base_ctx = next((c for c in ctxs if c.get("platform") == "sleeper"), ctxs[0])
-        trending = base_ctx["trending"]
-        rostered_maps = [self._rostered(b) for b in bundles]
-
-        def build(kind: str) -> list[dict]:
-            key24, key7 = (f"{kind}_24h", f"{kind}_7d")
-            ids = set(trending[key24]) | set(trending[key7])
-            rows = []
-            for pid in ids:
-                row = self._enrich(base_ctx, pid)
-                if not row:
-                    continue
-                per_league = []
-                for b, ctx, rmap in zip(bundles, ctxs, rostered_maps):
-                    e = self._enrich(ctx, pid) or {}
-                    r = rmap.get(pid)
-                    status = "free"
-                    owner = None
-                    if r is not None:
-                        status = "mine" if (b["my_roster"] and r["roster_id"] == b["my_roster"]["roster_id"]) else "owned"
-                        owner = self._owner(b, r)["display_name"]
-                    per_league.append({
-                        "league_id": b["league"]["league_id"], "league_name": b["league"]["name"],
-                        "status": status, "owner": owner,
-                        "proj_week": e.get("proj_week"), "proj_ros": e.get("proj_ros"),
-                        "platform_status": e.get("platform_status"), "waiver_until": e.get("waiver_until"),
-                    })
-                row["leagues"] = per_league
-                rows.append(row)
-            rows.sort(key=lambda r: -(r[key24] or 0))
-            return rows
-
-        return {
-            "week": week,
-            "leagues": [{"league_id": b["league"]["league_id"], "name": b["league"]["name"], "platform": b["league"].get("platform", "sleeper")} for b in bundles],
-            "adds": build("adds"),
-            "drops": build("drops"),
-        }
 
     async def my_players(self, week: int | None) -> dict:
         me = await self.me()
