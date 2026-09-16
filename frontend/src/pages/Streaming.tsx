@@ -18,17 +18,35 @@ function adverse(w: { summary: string | null; temperature: number | null } | nul
   return w.temperature != null && w.temperature <= 32 ? `${w.temperature}°F` : null
 }
 
+/** Bands for an opponent's implied total, as a defensive matchup.
+ *
+ * Absolute, not relative to what happens to be available: 20 points is a soft offence and 25 a
+ * dangerous one whatever else is on the wire. That means the table can come up mostly red, which
+ * is the honest answer — the good matchups are the first thing claimed, so what is left over
+ * skews hard. The few green cells are the point of the table.
+ */
+function band(v: number | null): 'good' | 'ok' | 'bad' | null {
+  if (v == null) return null
+  return v <= 20.5 ? 'good' : v >= 24.5 ? 'bad' : 'ok'
+}
+const BAND = {
+  good: 'bg-emerald-50 text-emerald-800 font-semibold',
+  ok: 'bg-amber-50/70 text-amber-800',
+  bad: 'bg-red-50/70 text-red-800',
+}
+
 /** One week of a streamer's schedule: who they play and the number that matters. */
 function GameCell({ g, pos, lead }: { g: Streamer['weeks'][number] | undefined; pos: 'K' | 'DEF'; lead: boolean }) {
   if (!g || !g.matchup) return <td className="px-2 py-1.5 text-center text-[11px] text-stone-300">bye</td>
   const v = pos === 'DEF' ? g.opp_implied : g.implied
-  // Green marks a spot worth taking: a defence facing an offence priced under 19, a kicker on
-  // one priced over 25. Read off the line only — FantasyPros has its own column.
-  const good = v != null && (pos === 'DEF' ? v <= 19 : v >= 25)
+  // A defence is graded on the band; a kicker's cell just marks the offences priced to score.
+  const tone = pos === 'DEF'
+    ? (band(v) ? BAND[band(v)!] : 'text-stone-400')
+    : v != null && v >= 25 ? 'font-semibold text-emerald-700' : 'text-stone-400'
   return (
-    <td className={`px-2 py-1.5 text-center ${lead ? 'bg-stone-50/70' : ''}`}>
+    <td className={`px-2 py-1.5 text-center ${lead ? 'ring-1 ring-inset ring-stone-200' : ''}`}>
       <div className="text-[11px] text-stone-600">{g.matchup}</div>
-      <div className={`text-[11px] tabular-nums ${good ? 'font-semibold text-emerald-700' : 'text-stone-400'}`}>{v == null ? '—' : fmt(v, 1)}</div>
+      <div className={`mt-0.5 rounded px-1 text-[11px] tabular-nums ${tone}`}>{v == null ? '—' : fmt(v, 1)}</div>
     </td>
   )
 }
@@ -46,64 +64,62 @@ function StreamTable({ pos, rows, weeks, onPlan }: { pos: 'K' | 'DEF'; rows: Str
             <th className={`${th} border-l border-stone-100 text-center`} colSpan={weeks.length}>
               {k ? 'Own team implied total — higher is better' : 'Opponent implied total — lower is better'}
             </th>
-            {k ? <>
-              <th className={`${th} border-l border-stone-100 text-center`} colSpan={3}>Offense, season to date</th>
-              <th className={`${th} border-l border-stone-100 text-center`} rowSpan={2}
-                  title="FantasyPros rest-of-season rank. A kicker is a hold-or-drop call far more than a weekly matchup call, so the rest-of-season read is the one that earns a column — the weekly rank is already doing its real work as the filter that keeps backups out of this table.">FP ROS</th>
-            </> : (
-              <th className={`${th} border-l border-stone-100 text-center`} colSpan={2} title="FantasyPros expert consensus. Not part of the ordering — this table is ranked on Vegas alone, and where the two disagree is the thing to look at.">FantasyPros</th>
-            )}
+            <th className={`${th} border-l border-stone-100 text-center`} colSpan={2} title="FantasyPros expert consensus. Not part of the ordering — this table is ranked on Vegas alone, and where the two disagree is the thing to look at.">FantasyPros</th>
+            {k && <th className={`${th} border-l border-stone-100 text-center`} colSpan={5}>Offense, season to date</th>}
             <th className={`${th} text-right`} rowSpan={2}>Own%</th>
             <th className="w-8" rowSpan={2} />
           </tr>
           <tr>
             {weeks.map((w, i) => <th key={w} className={`${th} text-center ${i === 0 ? 'border-l border-stone-100' : ''}`}>Wk {w}</th>)}
-            {k ? <>
-              <th className={`${th} border-l border-stone-100 text-center`} title="Field-goal attempts per game, and the split short (under 40 yards) · long (40+). The most direct measure there is — every factor above it ends up here — and the split is what your league's distance scoring actually pays on.">FGA/g</th>
-              <th className={`${th} text-center`} title="Share of red-zone trips that end in a field-goal attempt. The stall you want: a drive that reaches the 20 and settles for three rather than scoring six and leaving him an extra point.">RZ FG</th>
+            <th className={`${th} border-l border-stone-100 text-center`} title="Rank for this week only">Wk</th>
+            <th className={`${th} text-center`} title="Rest-of-season rank — who is worth holding rather than who is best this Sunday">ROS</th>
+            {k && <>
+              <th className={`${th} border-l border-stone-100 text-center`} title="Share of red-zone trips ending in a touchdown. LOW is good for a kicker — a team that stalls inside the 20 kicks three points instead of scoring six and leaving him the extra point.">RZ TD</th>
+              <th className={`${th} text-center`} title="Share of red-zone trips ending in a field-goal attempt. The same split read from the kicker's side, so high is good.">RZ FG</th>
+              <th className={`${th} text-center`} title="Third-down conversion rate. Drives that stay alive are drives that reach field-goal range — though they also reach the end zone, so read it alongside the red-zone split rather than on its own.">3rd</th>
               <th className={`${th} text-center`} title="Fourth-down attempts per game. The only factor here that actively removes kicks — every fourth down the staff goes for is a field goal that never happened. Low is good.">4th/g</th>
-            </> : <>
-              <th className={`${th} border-l border-stone-100 text-center`} title="Rank for this week only">Wk</th>
-              <th className={`${th} text-center`} title="Rest-of-season rank — who is worth holding rather than who is best this Sunday">ROS</th>
+              <th className={`${th} text-center`} title="Field-goal attempts per game, and the split short (under 40 yards) · long (40+). The most direct measure there is — every factor beside it ends up here — and the split is what your league's distance scoring actually pays on.">FGA/g</th>
             </>}
           </tr>
         </thead>
         <tbody>
           {rows.map((s, i) => {
             const f: TeamFactors | null = s.factors
-            const wx = adverse(s.weeks[0]?.weather)
+            const wx = k ? adverse(s.weeks[0]?.weather) : null
             return (
               <tr key={s.player_id} className={`border-t border-stone-100 ${i === 0 ? 'bg-emerald-50/60' : ''}`}>
                 <td className="px-3 py-1.5">
                   <span className="inline-flex items-center gap-1.5">
                     {i === 0 && <span className="rounded bg-emerald-600 px-1 py-0.5 text-[9px] font-bold leading-none text-white">1</span>}
                     <PlayerCell p={s} />
-                    {wx && (
+                    {k && wx && (
                       <span title="Forecast for this week's game. ESPN publishes none for later weeks, and carries no wind — the one thing that most changes a kick."
                             className="rounded bg-amber-100 px-1 py-0.5 text-[9px] font-medium leading-none text-amber-800">{wx}</span>
                     )}
                   </span>
                 </td>
                 {s.weeks.map((g, n) => <GameCell key={g.week} g={g} pos={pos} lead={n === 0} />)}
-                {k ? <>
-                  <td className="border-l border-stone-100 px-2 py-1.5 text-center tabular-nums text-stone-700">
-                    {f?.fg_att_pg == null ? dash : <><span className={f.fg_att_pg >= 2.5 ? 'font-semibold text-emerald-700' : ''}>{fmt(f.fg_att_pg, 1)}</span><span className="ml-1 text-[10px] text-stone-400">({f.fg_att_short ?? 0}·{f.fg_att_long ?? 0})</span></>}
+                <td className="border-l border-stone-100 px-2 py-1.5 text-center tabular-nums">
+                  {s.fp_rank == null ? dash : <span className={s.fp_rank <= 5 ? 'font-semibold text-violet-800' : 'text-violet-700'}>{s.fp_rank}</span>}
+                </td>
+                <td className="px-2 py-1.5 text-center tabular-nums">
+                  {s.fp_ros_rank == null ? dash : <span className={s.fp_ros_rank <= 8 ? 'font-semibold text-violet-800' : 'text-violet-700'}>{s.fp_ros_rank}</span>}
+                </td>
+                {k && <>
+                  <td className="border-l border-stone-100 px-2 py-1.5 text-center tabular-nums">
+                    {f?.rz_td_pct == null ? dash : <span className={f.rz_td_pct <= 40 ? 'font-semibold text-emerald-700' : 'text-stone-600'}>{fmt(f.rz_td_pct, 0)}%</span>}
                   </td>
                   <td className="px-2 py-1.5 text-center tabular-nums">
                     {f?.rz_fg_pct == null ? dash : <span className={f.rz_fg_pct >= 50 ? 'font-semibold text-emerald-700' : 'text-stone-600'}>{fmt(f.rz_fg_pct, 0)}%</span>}
                   </td>
                   <td className="px-2 py-1.5 text-center tabular-nums">
-                    {f?.fourth_att_pg == null ? dash : <span className={f.fourth_att_pg <= 1 ? 'font-semibold text-emerald-700' : 'text-stone-600'}>{fmt(f.fourth_att_pg, 1)}</span>}
-                  </td>
-                  <td className="border-l border-stone-100 px-2 py-1.5 text-center tabular-nums">
-                    {s.fp_ros_rank == null ? dash : <span className={s.fp_ros_rank <= 8 ? 'font-semibold text-violet-800' : 'text-violet-700'}>{s.fp_ros_rank}</span>}
-                  </td>
-                </> : <>
-                  <td className="border-l border-stone-100 px-2 py-1.5 text-center tabular-nums">
-                    {s.fp_rank == null ? dash : <span className={s.fp_rank <= 5 ? 'font-semibold text-violet-800' : 'text-violet-700'}>{s.fp_rank}</span>}
+                    {f?.third_pct == null ? dash : <span className={f.third_pct >= 45 ? 'font-semibold text-emerald-700' : 'text-stone-600'}>{fmt(f.third_pct, 0)}%</span>}
                   </td>
                   <td className="px-2 py-1.5 text-center tabular-nums">
-                    {s.fp_ros_rank == null ? dash : <span className={s.fp_ros_rank <= 8 ? 'font-semibold text-violet-800' : 'text-violet-700'}>{s.fp_ros_rank}</span>}
+                    {f?.fourth_att_pg == null ? dash : <span className={f.fourth_att_pg <= 1 ? 'font-semibold text-emerald-700' : 'text-stone-600'}>{fmt(f.fourth_att_pg, 1)}</span>}
+                  </td>
+                  <td className="px-2 py-1.5 text-center tabular-nums text-stone-700">
+                    {f?.fg_att_pg == null ? dash : <><span className={f.fg_att_pg >= 2.5 ? 'font-semibold text-emerald-700' : ''}>{fmt(f.fg_att_pg, 1)}</span><span className="ml-1 text-[10px] text-stone-400">({f.fg_att_short ?? 0}·{f.fg_att_long ?? 0})</span></>}
                   </td>
                 </>}
                 <td className="px-2 py-1.5 text-right text-stone-500">{pct(s.owned)}</td>
@@ -168,10 +184,17 @@ export default function Streaming() {
 
       {data && tab === 'DEF' && (
         <div className="space-y-2">
-          <p className="text-[12px] text-stone-500">
-            Ordered by this week's opponent implied total, lowest first — a defence scores off the other team failing.
-            The next {weeks.length} weeks run across each row so you can take a good matchup before someone else does.
-          </p>
+          <div className="flex flex-wrap items-center gap-x-3 gap-y-1 text-[12px] text-stone-500">
+            <span>
+              Ordered by this week's opponent implied total, lowest first — a defence scores off the other team failing.
+              The next {weeks.length} weeks run across each row so you can take a good matchup before someone else does.
+            </span>
+            <span className="flex items-center gap-1.5 text-[11px]">
+              <span className="rounded bg-emerald-50 px-1.5 py-0.5 font-semibold text-emerald-800">≤20.5 soft</span>
+              <span className="rounded bg-amber-50/70 px-1.5 py-0.5 text-amber-800">20.5–24.5</span>
+              <span className="rounded bg-red-50/70 px-1.5 py-0.5 text-red-800">≥24.5 avoid</span>
+            </span>
+          </div>
           <StreamTable pos="DEF" rows={data.streamers.DEF} weeks={weeks} onPlan={onPlan} />
         </div>
       )}
@@ -180,8 +203,8 @@ export default function Streaming() {
         <div className="space-y-2">
           <p className="text-[12px] text-stone-500">
             Ordered by the kicker's own team implied total, highest first. A kicker's points follow his offence's <em>volume</em> rather than
-            who it is playing, so the columns here describe the offence: how often it kicks, how often it stalls in the red zone instead of
-            scoring, and how often the staff takes the kick away on fourth down.
+            who it is playing, so the columns describe the offence: how often it stalls in the red zone instead of scoring, how well it sustains
+            drives, how often the staff takes the kick away on fourth down, and what all of that adds up to in attempts.
             {games != null && <> Season to date — <span className="font-medium text-stone-600">{games} game{games === 1 ? '' : 's'}</span>, so read the rates as a first signal rather than a settled one.</>}
             {' '}Limited to the kickers FantasyPros ranks this week, since a backup shares his starter's implied total exactly.
           </p>
