@@ -295,6 +295,51 @@ def parse_pool_page(soup: BeautifulSoup) -> list[dict]:
     return out
 
 
+def parse_buzz(soup: BeautifulSoup) -> list[dict]:
+    """Transaction Trends (`/buzzindex`) -> [{yahoo_id, name, adds, drops, trades, owned, started}].
+
+    This is Yahoo's own count of how many managers added and dropped each player across all of
+    Yahoo, which is the direct equivalent of Sleeper's trending numbers. It is a separate page
+    from the player pool because Yahoo only publishes the counts here — the pool's own "Trends"
+    column group carries nothing but percent rostered.
+    """
+    tbl = next((t for t in soup.find_all("table")
+                if t.find("th") and "Adds" in t.get_text() and "Drops" in t.get_text()), None)
+    if tbl is None:
+        return []
+    hrow = next((r for r in tbl.find_all("tr") if r.find("th")), None)
+    if hrow is None:
+        return []
+    # Full labels, not first words: the header ends with a combined "Adds Drops" sort toggle that
+    # would otherwise clobber the real "Adds" column, and "% Ros"/"% Start" would collide on "%".
+    # Private-use glyphs (sort arrows) are stripped so the labels match what the page displays.
+    cols: dict[str, int] = {}
+    for i, th in enumerate(hrow.find_all("th")):
+        label = re.sub(r"[\ue000-\uf8ff]", "", th.get_text(" ", strip=True)).strip()
+        if label and label not in cols:
+            cols[label] = i
+    out: list[dict] = []
+    for tr in tbl.find_all("tr"):
+        a = tr.select_one("a[data-ys-playerid]")
+        if not a:
+            continue
+        cells = tr.find_all("td")
+
+        def cell(label: str) -> str | None:
+            i = cols.get(label)
+            return cells[i].get_text(" ", strip=True) if i is not None and i < len(cells) else None
+
+        out.append({
+            "yahoo_id": a.get("data-ys-playerid"),
+            "name": a.get_text(strip=True),
+            "owned": _num((cell("% Ros") or "").rstrip("%")),
+            "started": _num((cell("% Start") or "").rstrip("%")),
+            "adds": _num(cell("Adds")), "drops": _num(cell("Drops")),
+            "trades": _num(cell("Trades")), "total": _num(cell("Total")),
+        })
+    return out
+
+
 def parse_transactions(soup: BeautifulSoup) -> list[dict]:
     """Transactions table -> [{type, adds:[yid], drops:[yid]}], one entry per row. Yahoo phrases a row's
     move as 'Free Agent'/'Added' (an add) or 'To Waivers'/'Dropped'/'Waivers' (a drop); best-effort, and
@@ -370,6 +415,13 @@ class Yahoo:
             return {"league_id": league_id, "name": home.get("league_name"), "settings": settings,
                     "my_team_id": home["my_team_id"], "teams": teams}
         return await self.cache.get(f"yahoo:league:{league_id}", 1 * MIN, loader)
+
+    async def buzz(self, league_id: str) -> list[dict]:
+        """Transaction Trends: Yahoo's own add/drop counts, for players still available here."""
+        async def loader():
+            html = await self._get(f"/{league_id}/buzzindex?bimtab=A&pos=ALL&src=combined")
+            return parse_buzz(_soup(html))
+        return await self.cache.get(f"yahoo:buzz:{league_id}", 10 * MIN, loader)
 
     async def pool(self, league_id: str, limit: int = 150) -> list[dict]:
         """Available players (free agents + waivers) with ownership. Yahoo's players page shows 25 rows and
@@ -512,6 +564,22 @@ def normalize_pool(rows: list[dict], xw: Crosswalk) -> tuple[dict[str, dict], di
             "rank_preseason": row.get("rank_preseason"), "rank_actual": row.get("rank_actual"),
         }
     return info, synthetic
+
+
+def normalize_buzz(rows: list[dict], xw: Crosswalk) -> dict[str, dict]:
+    """Transaction Trends rows -> {player_id: {adds, drops, trades, total}}. Rows Yahoo lists that
+    we can't resolve to a canonical player (mostly team defences under a club name) are dropped."""
+    out: dict[str, dict] = {}
+    for r in rows:
+        yid = r.get("yahoo_id")
+        pid = None
+        if yid and str(yid).isdigit():
+            pid = xw.from_yahoo(int(yid), r.get("name"), None)
+        if not pid:
+            continue
+        out[pid] = {"adds": r.get("adds"), "drops": r.get("drops"),
+                    "trades": r.get("trades"), "total": r.get("total")}
+    return out
 
 
 def normalize_transactions(rows: list[dict], yahoo_id_to_pid: dict[str, str]) -> list[dict]:

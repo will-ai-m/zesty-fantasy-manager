@@ -14,7 +14,7 @@ from . import fantasypros as fp
 from .espn import Espn, normalize_league as espn_normalize_league, normalize_pool as espn_normalize_pool, \
     normalize_transactions as espn_normalize_transactions, stat_id as espn_stat_id
 from .yahoo import Yahoo, normalize_league as yahoo_normalize_league, normalize_pool as yahoo_normalize_pool, \
-    normalize_transactions as yahoo_normalize_transactions
+    normalize_buzz as yahoo_normalize_buzz, normalize_transactions as yahoo_normalize_transactions
 from .ids import Crosswalk, load_nflverse_ids
 from .lineup import optimal_lineup, starting_slots
 from .scoring import score
@@ -665,6 +665,39 @@ class Service:
         return out
 
     # ------------------------------------------------------------------ views
+    async def _espn_movers(self, b: dict, ctx: dict, week: int, rostered: dict) -> list[dict]:
+        """ESPN's biggest ownership swings, fetched sorted by change rather than filtered out of
+        the ownership-sorted pool — the players being added hardest are usually the ones that pool
+        cuts off."""
+        assert self.espn is not None
+        league = b["league"]
+        season = str(league["season"])
+        stat_ids = [espn_stat_id(1, 1, season, week), espn_stat_id(1, 0, season),
+                    espn_stat_id(0, 0, season), espn_stat_id(0, 0, str(int(season) - 1))]
+        raw, xw, pro_teams = await asyncio.gather(
+            self.espn.movers(league["platform_league_id"], season, stat_ids),
+            self._crosswalk(), self.espn.pro_teams(season))
+        info, _ = espn_normalize_pool(raw, season, week, xw, pro_teams)
+        out = []
+        for pid, i in info.items():
+            if pid in rostered or i.get("owned_change") in (None, 0):
+                continue
+            row = self._enrich(ctx, pid)
+            if not row or row["position"] in ("K", "DEF"):
+                continue
+            out.append({**row, "owned_change": i["owned_change"], "owned": i.get("owned") or row.get("owned")})
+        out.sort(key=lambda r: -(r["owned_change"] or 0))
+        return out
+
+    async def _yahoo_movers(self, b: dict, pool: list[dict]) -> list[dict]:
+        """Yahoo's Transaction Trends counts, joined onto the pool rows we already have."""
+        assert self.yahoo is not None
+        raw, xw = await asyncio.gather(self.yahoo.buzz(b["league"]["platform_league_id"]), self._crosswalk())
+        counts = yahoo_normalize_buzz(raw, xw)
+        out = [{**r, **counts[r["player_id"]]} for r in pool if r["player_id"] in counts]
+        out.sort(key=lambda r: -(r.get("adds") or 0))
+        return out
+
     async def _team_odds(self, season: str, week: int) -> dict[str, dict]:
         """team -> {implied, opp_implied, label} for one week. Empty when the book hasn't
         priced that week yet, which is normal for games two or three weeks out."""
@@ -747,15 +780,13 @@ class Service:
             movement = {"kind": "sleeper", "label": "Sleeper adds and drops",
                         "blurb": "What every Sleeper manager is doing right now, league-wide. The fastest signal here and the noisiest — it moves on news before the box score does, and just as hard on hype."}
         elif platform == "espn":
-            movers = sorted([r for r in pool if r.get("owned_change") is not None and r["owned_change"] != 0],
-                            key=lambda r: -(r.get("owned_change") or 0))
-            movement = {"kind": "espn", "label": "ESPN ownership change",
-                        "blurb": "Change in the percentage of ESPN teams rostering each player. ESPN's own version of the add/drop wave, measured as a shift in ownership rather than a raw count."}
+            movers = await self._espn_movers(b, ctx, week, rostered)
+            movement = {"kind": "espn", "label": "ESPN most added and dropped",
+                        "blurb": "ESPN publishes no add counts, only the shift in how many teams roster a player — so this is that shift, which is what drives its own most-added list. Sort ascending for the drops."}
         elif platform == "yahoo":
-            movers = sorted([r for r in pool if r.get("rank_delta") is not None],
-                            key=lambda r: -(r.get("rank_delta") or 0))
-            movement = {"kind": "yahoo", "label": "Yahoo rank movement",
-                        "blurb": "How far each player has climbed from Yahoo's preseason rank to where it ranks him now. Yahoo publishes no add counts outside a five-row widget, so this is its read on who is breaking out."}
+            movers = await self._yahoo_movers(b, pool)
+            movement = {"kind": "yahoo", "label": "Yahoo transaction trends",
+                        "blurb": "Yahoo's own count of adds and drops across every Yahoo league, from its Transaction Trends page."}
         else:
             movers, movement = [], None
         by_trending = movers if movement else None

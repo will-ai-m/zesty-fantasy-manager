@@ -184,8 +184,8 @@ function panelColumns(kind: 'fp' | 'points' | 'usage' | 'move', opts: { week: nu
     ]
   } else {
     lead = [
-      { key: 'rank_delta', header: 'Rank Δ', title: "Places climbed from Yahoo's preseason rank to where it ranks him now", render: (t) => t.rank_delta == null ? <span className="text-stone-300">·</span> : <span className={t.rank_delta > 0 ? 'font-semibold text-emerald-700' : 'text-red-700'}>{t.rank_delta > 0 ? '+' : ''}{t.rank_delta}</span>, sort: (t) => t.rank_delta, align: 'right', desc: true },
-      { key: 'rank_actual', header: 'Now', title: "Where Yahoo ranks him today", render: (t) => num(t.rank_actual, 'text-stone-600'), sort: (t) => t.rank_actual, align: 'right' },
+      { key: 'adds', header: 'Adds', title: 'Added across all Yahoo leagues, from its Transaction Trends page', render: (t) => t.adds ? <span className="font-semibold text-emerald-700">{fmtInt(t.adds)}</span> : <span className="text-stone-300">·</span>, sort: (t) => t.adds, align: 'right', desc: true },
+      { key: 'drops', header: 'Drops', title: 'Dropped across all Yahoo leagues', render: (t) => t.drops ? <span className="text-red-700">{fmtInt(t.drops)}</span> : <span className="text-stone-300">·</span>, sort: (t) => t.drops, align: 'right', desc: true },
     ]
   }
 
@@ -432,7 +432,7 @@ export default function Waivers() {
             />
             {data.movement && data.by_trending && (
               <Panel
-                title={data.movement.label} sortKey={data.movement.kind === 'sleeper' ? 'adds_24h' : data.movement.kind === 'espn' ? 'owned_change' : 'rank_delta'}
+                title={data.movement.label} sortKey={data.movement.kind === 'sleeper' ? 'adds_24h' : data.movement.kind === 'espn' ? 'owned_change' : 'adds'}
                 rows={panels.trending} columns={moveCols} blurb={data.movement.blurb}
                 empty="Nothing is moving in this league's pool."
               />

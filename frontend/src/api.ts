@@ -161,8 +161,10 @@ export interface ArticleDigest { week: number; sources: ArticleSource[]; items: 
 export interface Target extends Player {
   /** Usage panel only: volume rank within position, the tie-break behind snap share. */
   volume_rank?: number
-  /** Yahoo only: preseason rank minus current rank. Positive means he has climbed. */
-  rank_delta?: number | null
+  /** Yahoo only, from its Transaction Trends page: adds and drops across all Yahoo leagues. */
+  adds?: number | null
+  drops?: number | null
+  trades?: number | null
   rank_preseason?: number | null
   rank_actual?: number | null
 }

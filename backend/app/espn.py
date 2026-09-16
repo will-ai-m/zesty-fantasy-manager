@@ -3,6 +3,7 @@ roster, player-pool and transaction payloads into the Sleeper-shaped structures 
 Read-only. See research/yahoo-espn-apis.md."""
 from __future__ import annotations
 
+import asyncio
 import json
 from typing import Any
 
@@ -116,6 +117,36 @@ class Espn:
             d = await self._get(f"/seasons/{season}/segments/0/leagues/{league_id}", ["kona_player_info"], flt)
             return d.get("players", [])
         return await self.cache.get(key, 10 * MIN, loader)
+
+    async def movers(self, league_id: str, season: str, stat_ids: list[str], limit: int = 25) -> list[dict]:
+        """The players ESPN's managers are actually picking up and cutting.
+
+        ESPN publishes no add/drop counts — only `percentChange`, the shift in how many teams
+        roster a player — so its own "most added" list is this field sorted. Both directions are
+        fetched because the pool we already hold is sorted by ownership, and a player being added
+        en masse is usually one hardly anybody owned yesterday, i.e. exactly who that pool cuts off.
+        """
+        async def one(asc: bool) -> list[dict]:
+            flt = {"players": {
+                "filterStatus": {"value": ["FREEAGENT", "WAIVERS"]},
+                "filterSlotIds": {"value": POOL_SLOT_IDS},
+                "limit": limit, "offset": 0,
+                "sortPercChanged": {"sortPriority": 1, "sortAsc": asc},
+                "filterStatsForTopScoringPeriodIds": {"value": 2, "additionalValue": stat_ids},
+            }}
+            d = await self._get(f"/seasons/{season}/segments/0/leagues/{league_id}", ["kona_player_info"], flt)
+            return d.get("players", [])
+
+        async def loader():
+            up, down = await asyncio.gather(one(False), one(True))
+            seen, out = set(), []
+            for p in [*up, *down]:
+                pid = (p.get("player") or {}).get("id")
+                if pid not in seen:
+                    seen.add(pid)
+                    out.append(p)
+            return out
+        return await self.cache.get(f"espn:movers:{league_id}:{season}:{limit}", 10 * MIN, loader)
 
     async def transactions(self, league_id: str, season: str) -> list[dict]:
         async def loader():
