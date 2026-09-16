@@ -12,13 +12,6 @@ const ecrNum = (posRank: string | null | undefined): number =>
 
 const POS_FILTERS = ['ALL', 'QB', 'RB', 'WR', 'TE', 'FLEX', 'K', 'DEF']
 
-const TIER_STYLE: Record<Tier, string> = {
-  A: 'bg-emerald-600 text-white',
-  B: 'bg-emerald-100 text-emerald-900',
-  C: 'bg-stone-100 text-stone-700',
-  D: 'bg-stone-50 text-stone-500',
-}
-
 /** Usage columns: last week's opportunity, which is what separates a real breakout from one
  * loud box score. Shared by the targets table and the browse table. */
 function usageColumns(lastWeek: number): Column<Player>[] {
@@ -141,52 +134,63 @@ export function playerColumns(opts: { week: number; rosEnd: number; onPlan?: (p:
   return cols
 }
 
-/** The claim list: who to put a bid in on, and for how much. */
-function targetColumns(opts: { week: number; lastWeek: number; usesFaab: boolean; onPlan?: (p: Player) => void }): Column<Target>[] {
-  const cols: Column<Target>[] = [
-    { key: 'rank', header: '#', render: (t) => <span className="text-[11px] tabular-nums text-stone-400">{t.rank}</span>, sort: (t) => t.rank, align: 'right' },
-    {
-      key: 'tier', header: 'Tier', title: 'Priority: A is a claim worth real money, D is a speculative stash',
-      render: (t) => <span className={`rounded px-1.5 py-0.5 text-[10px] font-bold leading-none ${TIER_STYLE[t.tier]}`} title={t.tier_label}>{t.tier}</span>,
-      sort: (t) => t.tier, align: 'center',
-    },
-    {
-      key: 'name', header: 'Player', render: (t) => <PlayerCell p={t} />, sort: (t) => t.name,
-    },
+/** Columns shared by the three panels. Each panel leads with the number it is ranked on, then
+ * carries the other two so a player can be checked against the signals he *didn't* rank for —
+ * a name high on the expert list with no snaps behind it is the interesting case. */
+function panelColumns(kind: 'fp' | 'points' | 'usage', opts: { week: number; lastWeek: number; onPlan?: (p: Player) => void }): Column<Target>[] {
+  const fpRank: Column<Target> = {
+    key: 'fp_waiver', header: 'FP', title: "Rank on FantasyPros' waiver-wire shortlist (10 experts, ~50 players)",
+    render: (t) => t.fp_waiver_rank == null
+      ? <span className="text-stone-300">·</span>
+      : <span className="font-semibold text-violet-800">{t.fp_waiver_rank}<span className="ml-1 text-[10px] font-normal text-violet-500">{t.fp_waiver_pos_rank}</span></span>,
+    sort: (t) => t.fp_waiver_rank ?? 9999, align: 'right',
+  }
+  const points: Column<Target> = {
+    key: 'last_week_pts', header: `Wk ${opts.lastWeek} pts`, title: `Fantasy points scored in week ${opts.lastWeek}, in this league's scoring`,
+    render: (t) => t.last_week_pts == null
+      ? <span className="text-stone-300">·</span>
+      : <span className={t.last_week_pts >= 15 ? 'font-semibold text-emerald-700' : ''}>{fmt(t.last_week_pts)}</span>,
+    sort: (t) => t.last_week_pts, align: 'right', desc: true,
+  }
+  const snap: Column<Target> = {
+    key: 'lw_snap_pct', header: 'Snap%', title: `Share of the team's offensive snaps in week ${opts.lastWeek}`,
+    render: (t) => t.lw_snap_pct == null
+      ? <span className="text-stone-300">·</span>
+      : <span className={t.lw_snap_pct >= 0.7 ? 'font-semibold text-emerald-700' : t.lw_snap_pct >= 0.45 ? 'text-stone-700' : 'text-stone-400'}>{Math.round(t.lw_snap_pct * 100)}%</span>,
+    sort: (t) => t.lw_snap_pct, align: 'right', desc: true,
+  }
+  const tgt: Column<Target> = {
+    key: 'lw_targets', header: 'Tgt', title: `Times targeted in week ${opts.lastWeek}`,
+    render: (t) => t.lw_targets ? <span className="font-medium text-sky-800">{t.lw_targets}</span> : <span className="text-stone-300">·</span>,
+    sort: (t) => t.lw_targets, align: 'right', desc: true,
+  }
+  const car: Column<Target> = {
+    key: 'lw_carries', header: 'Car', title: `Rushing attempts in week ${opts.lastWeek}`,
+    render: (t) => t.lw_carries ? <span className="font-medium text-amber-800">{t.lw_carries}</span> : <span className="text-stone-300">·</span>,
+    sort: (t) => t.lw_carries, align: 'right', desc: true,
+  }
+  const identity: Column<Target>[] = [
+    { key: 'name', header: 'Player', render: (t) => <PlayerCell p={t} />, sort: (t) => t.name },
     { key: 'pos', header: 'Pos', render: (t) => <Pos pos={t.position} />, sort: (t) => POS_ORDER.indexOf(t.position), align: 'center' },
     { key: 'opp', header: `Wk ${opts.week}`, title: 'Opponent the week you are claiming into', render: (t) => <span className={t.on_bye ? 'text-stone-400' : ''}>{t.on_bye ? 'BYE' : t.opponent ?? '—'}</span>, sort: (t) => t.opponent },
   ]
-  if (opts.usesFaab) {
-    cols.push({
-      key: 'bid', header: 'Bid', title: 'Recommended FAAB out of what you have left. The range is min viable → walk-away price; the bold number is what to actually enter.',
-      render: (t) => {
-        if (!t.bid) return <span className="text-stone-400">—</span>
-        if (t.bid.note) return <span className="text-stone-400" title={t.bid.note}>—</span>
-        return (
-          <span className="whitespace-nowrap">
-            <span className="font-bold text-emerald-800">${t.bid.rec}</span>
-            <span className="ml-1 text-[10px] text-stone-400">${t.bid.min}–{t.bid.max}</span>
-          </span>
-        )
-      },
-      sort: (t) => t.bid?.rec ?? -1, align: 'right', desc: true,
-    })
+  // The usage panel is ordered on snap share and volume *together*, so that combined rank is the
+  // column it sorts by — sorting on snap share alone would silently contradict the ranking.
+  const usage: Column<Target> = {
+    key: 'usage_score', header: 'Usage', title: 'Snap share and volume combined, each ranked against other available players at the same position. 100% = the most-used player available at that spot.',
+    render: (t) => t.usage_score == null
+      ? <span className="text-stone-300">·</span>
+      : <span className={t.usage_score >= 0.85 ? 'font-semibold text-emerald-700' : 'text-stone-700'}>{Math.round(t.usage_score * 100)}</span>,
+    sort: (t) => t.usage_score, align: 'right', desc: true,
   }
-  cols.push(
-    {
-      key: 'fp_waiver', header: 'FP rank', title: "FantasyPros' waiver-wire rank — a shortlist of ~50 players their experts think are worth adding at all. This is half the ranking; a dot means they did not make the list.",
-      render: (t) => t.fp_waiver_rank == null
-        ? <span className="text-stone-300">·</span>
-        : <span className="font-semibold text-violet-800">{t.fp_waiver_rank}<span className="ml-1 text-[10px] font-normal text-violet-500">{t.fp_waiver_pos_rank}</span></span>,
-      sort: (t) => t.fp_waiver_rank ?? 9999, align: 'right',
-    },
-    ...(usageColumns(opts.lastWeek) as unknown as Column<Target>[]),
-    {
-      key: 'proj_week', header: `Wk ${opts.week} proj`, title: `Projected points for week ${opts.week}, under this league's scoring`,
-      render: (t) => fmt(t.proj_week), sort: (t) => t.proj_week, align: 'right', desc: true,
-    },
+  const lead = kind === 'fp' ? [fpRank] : kind === 'points' ? [points] : [usage, snap, tgt, car]
+  const rest = kind === 'fp' ? [points, snap, tgt, car]
+    : kind === 'points' ? [fpRank, snap, tgt, car]
+      : [fpRank, points]
+  const cols: Column<Target>[] = [...lead, ...identity, ...rest,
+    { key: 'proj_week', header: `Wk ${opts.week} proj`, title: `Projected points for week ${opts.week}, in this league's scoring`, render: (t) => fmt(t.proj_week), sort: (t) => t.proj_week, align: 'right', desc: true },
     { key: 'owned', header: 'Own%', title: 'Percent of Sleeper leagues rostering this player', render: (t) => pct(t.owned), sort: (t) => t.owned, align: 'right', desc: true },
-  )
+  ]
   if (opts.onPlan) {
     cols.push({
       key: 'plan', header: '', render: (t) => (
@@ -195,6 +199,23 @@ function targetColumns(opts: { week: number; lastWeek: number; usesFaab: boolean
     })
   }
   return cols
+}
+
+/** One ranked panel: a heading that says what the order means, then the table. */
+function Panel({ title, blurb, rows, columns, sortKey, empty }: {
+  title: string; blurb: string; rows: Target[]; columns: Column<Target>[]; sortKey: string; empty: string
+}) {
+  return (
+    <section className="space-y-1.5">
+      <div>
+        <h2 className="text-[13px] font-semibold text-stone-800">{title} <span className="ml-1 text-[11px] font-normal text-stone-400">{rows.length}</span></h2>
+        <p className="text-[11px] text-stone-500">{blurb}</p>
+      </div>
+      {rows.length === 0
+        ? <p className="rounded-md border border-stone-200 bg-white px-3 py-2 text-[12px] text-stone-500">{empty}</p>
+        : <DataTable rows={rows} columns={columns} rowKey={(t) => t.player_id} initialSort={{ key: sortKey, dir: sortKey === 'fp_waiver' ? 'asc' : 'desc' }} rowClass={gameDayRowClass} />}
+    </section>
+  )
 }
 
 /** This week's waiver columns, summarised. Deliberately separate from the ranked table: that
@@ -332,14 +353,20 @@ export default function Waivers() {
     }
   }, [data, pos, search, hideOut, relevantOnly, fpOnly])
 
-  const targetRows = useMemo(() => {
-    const s = search.trim().toLowerCase()
-    return (data?.targets ?? []).filter((t) => {
+  // The same filters apply to all three panels, so a position filter narrows every read at once.
+  const panels = useMemo(() => {
+    const q = search.trim().toLowerCase()
+    const keep = (t: Target) => {
       if (pos === 'FLEX' ? !['RB', 'WR', 'TE'].includes(t.position) : pos !== 'ALL' && t.position !== pos) return false
       if (hideOut && OUT_STATUSES.has(t.injury_status ?? '')) return false
-      if (s && !(t.name.toLowerCase().includes(s) || (t.team ?? '').toLowerCase() === s)) return false
+      if (q && !(t.name.toLowerCase().includes(q) || (t.team ?? '').toLowerCase() === q)) return false
       return true
-    })
+    }
+    return {
+      fp: (data?.by_fantasypros ?? []).filter(keep),
+      points: (data?.by_points ?? []).filter(keep),
+      usage: (data?.by_usage ?? []).filter(keep),
+    }
   }, [data, pos, search, hideOut])
 
   const browseColumns = useMemo(() => playerColumns({
@@ -347,10 +374,12 @@ export default function Waivers() {
     onPlan: (p) => leagueId && openPlan({ leagueId, add: p }),
   }), [targetWeek, lastWeek, data?.ros_end_week, leagueId, openPlan, league?.platform])
 
-  const tgtColumns = useMemo(() => targetColumns({
-    week: targetWeek, lastWeek, usesFaab: data?.faab.uses_faab ?? false,
-    onPlan: (p) => leagueId && openPlan({ leagueId, add: p }),
-  }), [targetWeek, lastWeek, data?.faab.uses_faab, leagueId, openPlan])
+  const colOpts = useMemo(() => ({
+    week: targetWeek, lastWeek, onPlan: (p: Player) => leagueId && openPlan({ leagueId, add: p }),
+  }), [targetWeek, lastWeek, leagueId, openPlan])
+  const fpCols = useMemo(() => panelColumns('fp', colOpts), [colOpts])
+  const ptsCols = useMemo(() => panelColumns('points', colOpts), [colOpts])
+  const useCols = useMemo(() => panelColumns('usage', colOpts), [colOpts])
 
   if (!league) return <Spinner />
   const t = league.my_team
@@ -396,7 +425,7 @@ export default function Waivers() {
           </>
         )}
         <span className="ml-auto text-[12px] text-stone-500">
-          {tab === 'targets' ? `${targetRows.length} ranked for week ${targetWeek}`
+          {tab === 'targets' ? `Week ${targetWeek} claims`
             : tab === 'browse' ? `${rows.length} of ${data?.players.length ?? 0} free agents`
               : `Weeks ${data?.stream_weeks?.join(', ') ?? targetWeek}`}
         </span>
@@ -407,12 +436,22 @@ export default function Waivers() {
 
       {data && tab === 'targets' && (
         <div className="flex flex-col gap-3 lg:flex-row lg:items-start">
-          <div className="min-w-0 flex-1 space-y-2">
-            <p className="text-[12px] text-stone-500">
-              Ranked for <span className="font-medium text-stone-700">week {targetWeek}</span> on FantasyPros' waiver rank, plus week {lastWeek} points, snap share and volume — targets for a receiver, carries for a back. The last three are ranked against others at the same position.
-              {data.faab.uses_faab && <> Bids are out of your <span className="font-medium text-stone-700">${data.faab.remaining}</span> remaining.</>}
-            </p>
-            <DataTable rows={targetRows} columns={tgtColumns} rowKey={(t) => t.player_id} initialSort={{ key: 'rank', dir: 'asc' }} rowClass={gameDayRowClass} />
+          <div className="min-w-0 flex-1 space-y-5">
+            <Panel
+              title="FantasyPros waiver list" sortKey="fp_waiver" rows={panels.fp} columns={fpCols}
+              blurb={`Their shortlist for week ${targetWeek}, in their order — 10 experts, and the forward-looking view.`}
+              empty="Nobody available is on this week's FantasyPros waiver list."
+            />
+            <Panel
+              title={`Week ${lastWeek} points`} sortKey="last_week_pts" rows={panels.points} columns={ptsCols}
+              blurb={`What they actually scored last week in this league's scoring. Quarterbacks top this on raw points — filter by position to read it within a spot.`}
+              empty={`Nobody available scored in week ${lastWeek}.`}
+            />
+            <Panel
+              title="Snap share and volume" sortKey="usage_score" rows={panels.usage} columns={useCols}
+              blurb={`Week ${lastWeek} usage — targets for receivers and tight ends, carries for backs, each ranked against others at the same position. Leads scoring, so it catches a role change before the points show up. Quarterbacks excluded.`}
+              empty="No usage recorded for available players last week."
+            />
           </div>
           {data.articles && <ArticleBlock digest={data.articles} />}
         </div>

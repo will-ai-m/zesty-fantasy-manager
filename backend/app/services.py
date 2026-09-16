@@ -678,12 +678,13 @@ class Service:
         return out
 
     async def waivers(self, league_id: str, week: int | None) -> dict:
-        """Two answers, not one list.
+        """Several reads on the pool, not one ranking.
 
-        `targets` ranks the claimable pool on a blend of expert consensus, last week's
-        opportunity, production, roster fit and market heat, then sizes a FAAB bid against what
-        is left in the budget. `streamers` handles K and D/ST separately, on Vegas implied
-        totals for the next three weeks, because they are matchup plays rather than assets.
+        The claimable pool is ordered three separate ways — by FantasyPros' waiver shortlist, by
+        what players actually scored last week, and by the snap share and volume that lead
+        scoring — so that where those disagree stays visible instead of averaging out.
+        `streamers` handles K and D/ST apart from all of it, on Vegas implied totals for the next
+        three weeks, because they are matchup plays rather than assets.
         """
         b = await self._league_bundle(league_id)
         st = await self.state()
@@ -716,41 +717,17 @@ class Service:
             r["vs_mine"] = round((r.get("proj_ros") or 0.0) - base, 1) if base is not None and r.get("proj_ros") is not None else None
 
         season = str(b["league"]["season"])
-        _, fp_idx = self._fp()
-        waiver_pool_size = len(fp_idx.get("waiver") or {}) or 50
-
         lg = self._league_summary(b)
-        faab = lg.get("waiver") or {}
-        budget = int(faab.get("budget") or 0)
-        remaining = int((lg.get("my_team") or {}).get("faab_remaining") or 0)
-        bid_min = int(faab.get("bid_min") or 0)
 
-        scored = wv.score_targets(free, waiver_pool_size)
-        for r in free:
-            sc = scored[r["player_id"]]
-            r["target_score"] = sc["score"]
-            r["score_parts"] = sc["components"]
-
-        # K and D/ST are ranked as streamers below, not as season-long claims, so they are kept
-        # out of the target list to stop a kicker outranking a starting running back.
-        targets = [r for r in free if r["position"] not in ("K", "DEF")]
-        targets.sort(key=lambda r: -r["target_score"])
-        for i, r in enumerate(targets):
-            r["rank"] = i + 1
-            r["tier"] = wv.tier_for(r["target_score"], i + 1)
-            r["tier_label"] = wv.TIER_LABEL[r["tier"]]
-        # Spread the bid within each tier so the standout target costs more than the marginal one.
-        for tier in ("A", "B", "C", "D"):
-            group = [r for r in targets if r["tier"] == tier]
-            if not group:
-                continue
-            hi, lo = group[0]["target_score"], group[-1]["target_score"]
-            span = hi - lo
-            for r in group:
-                lead = 0.6 if span <= 0 else (r["target_score"] - lo) / span
-                r["bid"] = wv.bid_for(tier, remaining, budget, bid_min, lead)
-        # Everything past the first several dozen is noise a human will never scroll to.
-        targets = targets[:60]
+        # Three reads on the same pool rather than one blended ranking: the expert shortlist,
+        # what was actually scored, and the usage that leads scoring. Kept separate so the
+        # places they disagree stay visible. K and D/ST belong to the streamers below.
+        pool = [r for r in free if r["position"] not in ("K", "DEF")]
+        by_fantasypros = sorted(
+            [r for r in pool if r.get("fp_waiver_rank")], key=lambda r: r["fp_waiver_rank"])
+        by_points = sorted(
+            [r for r in pool if r.get("last_week_pts") is not None], key=lambda r: -r["last_week_pts"])
+        by_usage = wv.rank_by_usage(pool)
 
         odds_weeks = [w for w in range(week, min(REGULAR_SEASON_WEEKS, week + 2) + 1)]
         odds_by_week = dict(zip(odds_weeks, await asyncio.gather(*(self._team_odds(season, w) for w in odds_weeks))))
@@ -766,8 +743,9 @@ class Service:
             "league": lg,
             "week": week,
             "ros_end_week": ctx["ros_end_week"],
-            "faab": {"budget": budget, "remaining": remaining, "bid_min": bid_min, "uses_faab": bool(budget)},
-            "targets": targets,
+            "by_fantasypros": by_fantasypros[:40],
+            "by_points": by_points[:40],
+            "by_usage": by_usage[:40],
             "streamers": streamers,
             "stream_weeks": odds_weeks,
             "articles": self._articles(season, week),

@@ -156,18 +156,10 @@ export interface ArticleSource { id: string; name: string; url: string; partial?
 
 export interface ArticleDigest { week: number; sources: ArticleSource[]; items: ArticleItem[] }
 
-export interface Bid { min: number; rec: number; max: number; pct: number; note?: string }
-
-export type Tier = 'A' | 'B' | 'C' | 'D'
-
-/** A ranked claim candidate: a Player plus why it ranks and what to bid. */
+/** A free agent in one of the three ranked panels. `usage_score` is only set in the usage
+ * panel, where it is the blend of snap-share and volume rank that orders it. */
 export interface Target extends Player {
-  rank: number
-  target_score: number
-  score_parts: { fantasypros: number; production: number; snaps: number; volume: number }
-  tier: Tier
-  tier_label: string
-  bid: Bid | null
+  usage_score?: number
 }
 
 /** A K or D/ST ranked for one specific week on Vegas implied totals. */
@@ -186,8 +178,9 @@ export interface WaiversResponse {
   league: LeagueSummary
   week: number
   ros_end_week: number
-  faab: { budget: number; remaining: number; bid_min: number; uses_faab: boolean }
-  targets: Target[]
+  by_fantasypros: Target[]
+  by_points: Target[]
+  by_usage: Target[]
   streamers: { DEF: StreamWeek[]; K: StreamWeek[] }
   stream_weeks: number[]
   articles: ArticleDigest | null
