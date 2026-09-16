@@ -319,10 +319,10 @@ class Service:
                 "lw_rec": int(st["rec"]) if st.get("rec") else None,
                 "lw_rz": (int(st.get("rec_rz_tgt") or 0) + int(st.get("rush_rz_att") or 0)) or None,
             }
-            # One comparable "volume" number so a 9-target WR and a 16-carry RB normalise onto
-            # the same scale in the target score (which divides by a per-position full role).
-            touches = (int(tgt) if tgt else 0) + (int(car) if car else 0)
-            row["lw_volume"] = touches or (int(st["pass_att"]) if st.get("pass_att") else None)
+            # The scorer picks whichever of these defines the player's position (targets for a
+            # receiver, carries for a back, attempts for a quarterback), so all three are kept.
+            row["lw_pass_att"] = int(st["pass_att"]) if st.get("pass_att") else None
+            row["lw_volume"] = ((int(tgt) if tgt else 0) + (int(car) if car else 0)) or row["lw_pass_att"]
             out[pid] = row
         return out
 
@@ -725,8 +725,9 @@ class Service:
         remaining = int((lg.get("my_team") or {}).get("faab_remaining") or 0)
         bid_min = int(faab.get("bid_min") or 0)
 
+        scored = wv.score_targets(free, waiver_pool_size)
         for r in free:
-            sc = wv.score_target(r, waiver_pool_size)
+            sc = scored[r["player_id"]]
             r["target_score"] = sc["score"]
             r["score_parts"] = sc["components"]
 

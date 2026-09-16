@@ -201,7 +201,6 @@ function targetColumns(opts: { week: number; lastWeek: number; usesFaab: boolean
  * table is numbers, this is somebody's opinion, and mixing the two makes it unclear which is
  * which. Sell/hold calls are commentary rather than claims, so they sit in their own group. */
 function ArticleBlock({ digest }: { digest: ArticleDigest }) {
-  const [open, setOpen] = useState(true)
   const adds = digest.items.filter((i) => i.action === 'add' || i.action === 'buy')
   const other = digest.items.filter((i) => i.action === 'sell' || i.action === 'hold')
 
@@ -223,26 +222,23 @@ function ArticleBlock({ digest }: { digest: ArticleDigest }) {
   )
 
   return (
-    <section className="rounded-md border border-amber-200 bg-amber-50/50">
-      <button onClick={() => setOpen(!open)} className="flex w-full items-center gap-2 px-3 py-2 text-left">
-        <span className="text-[13px] font-semibold text-stone-800">What the columns are saying this week</span>
-        <span className="text-[11px] text-stone-500">
-          {digest.sources.map((src, n) => (
-            <span key={src.id}>{n > 0 && ' · '}<a href={src.url} target="_blank" rel="noreferrer" onClick={(e) => e.stopPropagation()} className="underline decoration-dotted hover:text-amber-900">{src.name}</a>{src.partial && <span title={src.partial_note ?? 'Partly paywalled'}> (partial)</span>}</span>
+    <aside className="w-full shrink-0 self-start rounded-md border border-amber-200 bg-amber-50/50 lg:sticky lg:top-3 lg:max-h-[calc(100vh-2rem)] lg:w-80 lg:overflow-y-auto xl:w-96">
+      <div className="border-b border-amber-200 px-3 py-2">
+        <h2 className="text-[13px] font-semibold text-stone-800">What the columns say</h2>
+        <p className="mt-0.5 text-[11px] text-stone-500">
+          Week {digest.week} · {digest.sources.map((src, n) => (
+            <span key={src.id}>{n > 0 && ' · '}<a href={src.url} target="_blank" rel="noreferrer" className="underline decoration-dotted hover:text-amber-900">{src.name}</a>{src.partial && <span title={src.partial_note ?? 'Partly paywalled'}> (partial)</span>}</span>
           ))}
-        </span>
-        <span className="ml-auto text-[11px] text-stone-400">{open ? 'hide' : `show ${digest.items.length}`}</span>
-      </button>
-      {open && (
-        <div className="space-y-3 px-3 pb-3">
-          <ul className="space-y-1.5 text-[12px]">{adds.map((i) => <Item key={i.name} i={i} />)}</ul>
-          {other.length > 0 && (
-            <ul className="space-y-1.5 border-t border-amber-200 pt-2 text-[12px]">{other.map((i) => <Item key={i.name} i={i} />)}</ul>
-          )}
-          <p className="text-[11px] text-stone-500">Opinion, not part of the ranking — the table above is numbers only.</p>
-        </div>
-      )}
-    </section>
+        </p>
+      </div>
+      <div className="space-y-3 px-3 py-2.5">
+        <ul className="space-y-2 text-[12px]">{adds.map((i) => <Item key={i.name} i={i} />)}</ul>
+        {other.length > 0 && (
+          <ul className="space-y-2 border-t border-amber-200 pt-2.5 text-[12px]">{other.map((i) => <Item key={i.name} i={i} />)}</ul>
+        )}
+        <p className="border-t border-amber-200 pt-2 text-[11px] text-stone-500">Opinion — not part of the ranking, which is numbers only.</p>
+      </div>
+    </aside>
   )
 }
 
@@ -410,13 +406,15 @@ export default function Waivers() {
       {error && <ErrorBox error={error} />}
 
       {data && tab === 'targets' && (
-        <div className="space-y-2">
+        <div className="flex flex-col gap-3 lg:flex-row lg:items-start">
+          <div className="min-w-0 flex-1 space-y-2">
+            <p className="text-[12px] text-stone-500">
+              Ranked for <span className="font-medium text-stone-700">week {targetWeek}</span> on FantasyPros' waiver rank, plus week {lastWeek} points, snap share and volume — targets for a receiver, carries for a back. The last three are ranked against others at the same position.
+              {data.faab.uses_faab && <> Bids are out of your <span className="font-medium text-stone-700">${data.faab.remaining}</span> remaining.</>}
+            </p>
+            <DataTable rows={targetRows} columns={tgtColumns} rowKey={(t) => t.player_id} initialSort={{ key: 'rank', dir: 'asc' }} rowClass={gameDayRowClass} />
+          </div>
           {data.articles && <ArticleBlock digest={data.articles} />}
-          <p className="text-[12px] text-stone-500">
-            Ranked for <span className="font-medium text-stone-700">week {targetWeek}</span> on FantasyPros' waiver rank (half the weight), week {lastWeek} points, and week {lastWeek} snap share.
-            {data.faab.uses_faab && <> Bids are out of your <span className="font-medium text-stone-700">${data.faab.remaining}</span> remaining.</>}
-          </p>
-          <DataTable rows={targetRows} columns={tgtColumns} rowKey={(t) => t.player_id} initialSort={{ key: 'rank', dir: 'asc' }} rowClass={gameDayRowClass} />
         </div>
       )}
 

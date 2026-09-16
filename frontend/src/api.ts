@@ -164,7 +164,7 @@ export type Tier = 'A' | 'B' | 'C' | 'D'
 export interface Target extends Player {
   rank: number
   target_score: number
-  score_parts: { fantasypros: number; production: number; opportunity: number }
+  score_parts: { fantasypros: number; production: number; snaps: number; volume: number }
   tier: Tier
   tier_label: string
   bid: Bid | null

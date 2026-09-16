@@ -2,10 +2,13 @@
 
 The waiver page answers two different questions, so this module computes two different things.
 
-**Claim targets** rank on three numbers, nothing else: where FantasyPros' experts rank the player,
-what he scored last week, and how much he was actually on the field. None is trustworthy alone —
-consensus lags a breakout by a week, one box score overstates a touchdown fluke, and snaps lead
-production without guaranteeing it — so the score is a weighted blend of the three.
+**Claim targets** rank on four numbers, nothing else: where FantasyPros' experts rank the player,
+what he scored last week, how much he was on the field, and how often the ball actually came his
+way. None is trustworthy alone — consensus lags a breakout by a week, one box score overstates a
+touchdown fluke, and snaps can be empty of usage — so the score is a weighted blend of the four.
+
+Volume is read per position, because the touch that matters differs: targets for a receiver or
+tight end, carries for a back, attempts for a quarterback.
 
 **Streamers** are a different question entirely. K and D/ST are matchup plays with almost no
 week-to-week carryover, so they rank on Vegas implied totals rather than season-long value:
@@ -16,11 +19,11 @@ from __future__ import annotations
 
 from typing import Any
 
-# Blend weights. FantasyPros carries half the weight because its waiver list is a hand-picked
-# shortlist of players worth adding at all — it is what keeps a backup QB with gaudy snap counts
-# from outranking a genuine starter. The other half splits evenly between what the player actually
-# did last week and how much he was on the field for it.
-WEIGHTS = {"fantasypros": 0.50, "production": 0.25, "opportunity": 0.25}
+# Blend weights. FantasyPros carries the largest share because its waiver list is a hand-picked
+# shortlist of players worth adding at all — it is what keeps a backup with gaudy snap counts from
+# outranking a genuine starter. The rest splits evenly between what the player did last week, how
+# much he was on the field, and how often he was actually given the ball.
+WEIGHTS = {"fantasypros": 0.40, "production": 0.20, "snaps": 0.20, "volume": 0.20}
 
 # Tier cutoffs on the blended score, and the FAAB each tier is worth as a percentage of the
 # budget you have LEFT (not the original budget — late-season dollars are scarcer).
@@ -37,11 +40,9 @@ TIERS: list[tuple[str, float, dict[str, int]]] = [
 TIER_RANK_CAP = {"A": 3, "B": 10}
 TIER_LABEL = {"A": "Priority", "B": "Starter", "C": "Depth", "D": "Flier"}
 
-# Weekly volume that reads as a full-time role, by position. Used to normalise last week's usage
-# into 0..1 so a 9-target WR and a 17-carry RB score alike.
-FULL_ROLE = {"WR": 9.0, "TE": 7.0, "RB": 16.0, "QB": 32.0}
-# Last week's fantasy points that read as a strong week, by position.
-BIG_WEEK = {"QB": 22.0, "RB": 16.0, "WR": 15.0, "TE": 12.0, "K": 10.0, "DEF": 12.0}
+# The touch that defines a role at each position. Counts are compared against other players at
+# the same position rather than against a fixed threshold (see _percentile_within).
+VOLUME_STAT = {"WR": "lw_targets", "TE": "lw_targets", "RB": "lw_carries", "QB": "lw_pass_att"}
 
 
 def _clamp(x: float, lo: float = 0.0, hi: float = 1.0) -> float:
@@ -65,39 +66,54 @@ def _fantasypros_score(row: dict, waiver_pool_size: int) -> float:
     return 0.0
 
 
-def _opportunity_score(row: dict) -> float:
-    """Snap share plus role volume from the last completed week. This is the leading indicator —
-    a back who just took 70% of snaps matters even if the box score was quiet."""
-    pos = row.get("position")
-    snap = row.get("lw_snap_pct")
-    vol = row.get("lw_volume")
-    parts: list[float] = []
-    if snap is not None:
-        parts.append(_clamp(float(snap)))
-    if vol is not None and pos in FULL_ROLE:
-        parts.append(_clamp(float(vol) / FULL_ROLE[pos]))
-    if not parts:
-        return 0.0
-    return sum(parts) / len(parts)
+def _percentile_within(rows: list[dict], value) -> dict[str, float]:
+    """{player_id: 0..1} by rank of `value` among the players at the same position who have one.
+
+    Raw counts don't compare across positions — a quarterback throwing 35 times and a receiver
+    seeing 9 targets are both full-time roles, and a quarterback's 25 points is an ordinary week
+    where a tight end's would be a great one. Ranking each position against itself is what makes
+    "best available" mean the same thing in every row.
+    """
+    by_pos: dict[str, list[tuple[str, float]]] = {}
+    for r in rows:
+        v = value(r)
+        if v is None:
+            continue
+        by_pos.setdefault(r.get("position") or "", []).append((r["player_id"], float(v)))
+    out: dict[str, float] = {}
+    for group in by_pos.values():
+        group.sort(key=lambda kv: kv[1])
+        n = len(group)
+        for i, (pid, _) in enumerate(group):
+            out[pid] = 1.0 if n == 1 else i / (n - 1)
+    return out
 
 
-def _production_score(row: dict) -> float:
-    pts = row.get("last_week_pts")
-    if pts is None:
-        return 0.0
-    return _clamp(float(pts) / BIG_WEEK.get(row.get("position") or "", 14.0))
+def _volume_count(row: dict) -> float | None:
+    stat = VOLUME_STAT.get(row.get("position") or "")
+    return row.get(stat) if stat else None
 
 
-def score_target(row: dict, waiver_pool_size: int) -> dict[str, Any]:
-    """Blended 0..1 score for one free agent from its three inputs, each of which is also shown
-    as its own column in the table so the ranking can be checked by eye."""
-    comps = {
-        "fantasypros": _fantasypros_score(row, waiver_pool_size),
-        "production": _production_score(row),
-        "opportunity": _opportunity_score(row),
-    }
-    total = sum(comps[k] * w for k, w in WEIGHTS.items())
-    return {"score": round(total, 4), "components": {k: round(v, 3) for k, v in comps.items()}}
+def score_targets(rows: list[dict], waiver_pool_size: int) -> dict[str, dict[str, Any]]:
+    """Score the whole pool at once, because three of the four inputs only mean something
+    relative to the other players available at the same position. FantasyPros' rank is the
+    exception: it is already an expert judgement made across positions, so it is used as-is.
+    """
+    pts = _percentile_within(rows, lambda r: r.get("last_week_pts"))
+    snaps = _percentile_within(rows, lambda r: r.get("lw_snap_pct"))
+    vol = _percentile_within(rows, _volume_count)
+    out: dict[str, dict[str, Any]] = {}
+    for r in rows:
+        pid = r["player_id"]
+        comps = {
+            "fantasypros": _fantasypros_score(r, waiver_pool_size),
+            "production": pts.get(pid, 0.0),
+            "snaps": snaps.get(pid, 0.0),
+            "volume": vol.get(pid, 0.0),
+        }
+        total = sum(comps[k] * w for k, w in WEIGHTS.items())
+        out[pid] = {"score": round(total, 4), "components": {k: round(v, 3) for k, v in comps.items()}}
+    return out
 
 
 def tier_for(score: float, rank: int | None = None) -> str:
