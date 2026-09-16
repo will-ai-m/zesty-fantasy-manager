@@ -23,6 +23,7 @@ function StreamTable({ pos, week, players, onPlan }: { pos: 'K' | 'DEF'; week: n
             <th className="px-3 py-1 text-left font-medium">{pos === 'DEF' ? 'Defense' : 'Kicker'}</th>
             <th className="px-2 py-1 text-left font-medium">Matchup</th>
             <th className="px-2 py-1 text-right font-medium" title={pos === 'DEF' ? "Points the opponent is projected to score — lower is a better streaming spot" : "Points this kicker's own offense is projected to score — higher is better"}>{basisLabel}</th>
+            <th className="px-2 py-1 text-right font-medium" title="FantasyPros' weekly expert rank for this position. Deliberately not mixed into the matchup number — the experts weigh the unit itself, the line only weighs who it is playing, and where they disagree is the thing worth looking at. Published one week at a time, so it is blank for later weeks.">FP</th>
             <th className="px-2 py-1 text-right font-medium">Own%</th>
             <th className="w-8" />
           </tr>
@@ -39,6 +40,11 @@ function StreamTable({ pos, week, players, onPlan }: { pos: 'K' | 'DEF'; week: n
               <td className="px-2 py-1.5 text-stone-600">{s.matchup ?? '—'}</td>
               <td className="px-2 py-1.5 text-right tabular-nums">
                 <span className={s.stream_score >= 0.6 ? 'font-semibold text-emerald-700' : 'text-stone-700'}>{fmt(s.stream_basis, 1)}</span>
+              </td>
+              <td className="px-2 py-1.5 text-right tabular-nums">
+                {s.fp_rank == null
+                  ? <span className="text-stone-300">·</span>
+                  : <span className={s.fp_rank <= 5 ? 'font-semibold text-violet-800' : 'text-violet-700'}>{s.fp_rank}</span>}
               </td>
               <td className="px-2 py-1.5 text-right text-stone-500">{pct(s.owned)}</td>
               <td className="pr-2">
