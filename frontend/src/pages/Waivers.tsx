@@ -1,6 +1,6 @@
 import { useMemo, useState } from 'react'
 import { useQuery } from '@tanstack/react-query'
-import { api, type ArticleDigest, type ArticleItem, type Player, type Streamer, type Target, type Tier } from '../api'
+import { api, type ArticleDigest, type ArticleItem, type Movement, type Player, type Streamer, type Target } from '../api'
 import { fmt, fmtInt, gameDayRowClass, OUT_STATUSES, pct, POS_ORDER, shortDate } from '../lib/format'
 import { useApp } from '../components/AppContext'
 import { Chip, ErrorBox, LeagueBar, PlatformBadge, PlayerCell, Pos, Spinner } from '../components/Badges'
@@ -134,103 +134,96 @@ export function playerColumns(opts: { week: number; rosEnd: number; onPlan?: (p:
   return cols
 }
 
-/** Columns shared by the three panels. Each panel leads with the number it is ranked on, then
- * carries the other two so a player can be checked against the signals he *didn't* rank for —
- * a name high on the expert list with no snaps behind it is the interesting case. */
-function panelColumns(kind: 'fp' | 'points' | 'usage' | 'trending', opts: { week: number; lastWeek: number; onPlan?: (p: Player) => void }): Column<Target>[] {
-  const fpRank: Column<Target> = {
-    key: 'fp_waiver', header: 'FP', title: "Rank on FantasyPros' waiver-wire shortlist (10 experts, ~50 players)",
-    render: (t) => t.fp_waiver_rank == null
-      ? <span className="text-stone-300">·</span>
-      : <span className="font-semibold text-violet-800">{t.fp_waiver_rank}<span className="ml-1 text-[10px] font-normal text-violet-500">{t.fp_waiver_pos_rank}</span></span>,
-    sort: (t) => t.fp_waiver_rank ?? 9999, align: 'right',
-  }
-  const points: Column<Target> = {
-    key: 'last_week_pts', header: `Wk ${opts.lastWeek} pts`, title: `Fantasy points scored in week ${opts.lastWeek}, in this league's scoring`,
-    render: (t) => t.last_week_pts == null
-      ? <span className="text-stone-300">·</span>
-      : <span className={t.last_week_pts >= 15 ? 'font-semibold text-emerald-700' : ''}>{fmt(t.last_week_pts)}</span>,
-    sort: (t) => t.last_week_pts, align: 'right', desc: true,
-  }
-  const snap: Column<Target> = {
-    key: 'lw_snap_pct', header: 'Snap%', title: `Share of the team's offensive snaps in week ${opts.lastWeek}`,
-    render: (t) => t.lw_snap_pct == null
-      ? <span className="text-stone-300">·</span>
-      : <span className={t.lw_snap_pct >= 0.7 ? 'font-semibold text-emerald-700' : t.lw_snap_pct >= 0.45 ? 'text-stone-700' : 'text-stone-400'}>{Math.round(t.lw_snap_pct * 100)}%</span>,
-    sort: (t) => t.lw_snap_pct, align: 'right', desc: true,
-  }
-  const tgt: Column<Target> = {
-    key: 'lw_targets', header: 'Tgt', title: `Times targeted in week ${opts.lastWeek}`,
-    render: (t) => t.lw_targets ? <span className="font-medium text-sky-800">{t.lw_targets}</span> : <span className="text-stone-300">·</span>,
-    sort: (t) => t.lw_targets, align: 'right', desc: true,
-  }
-  const car: Column<Target> = {
-    key: 'lw_carries', header: 'Car', title: `Rushing attempts in week ${opts.lastWeek}`,
-    render: (t) => t.lw_carries ? <span className="font-medium text-amber-800">{t.lw_carries}</span> : <span className="text-stone-300">·</span>,
-    sort: (t) => t.lw_carries, align: 'right', desc: true,
-  }
+/** Each panel answers one question, so it carries only the columns that answer it. Everything a
+ * player is doing elsewhere is a click away in the drawer; repeating all of it in all four panels
+ * is what made the page a scroll. Identity (name, position, opponent) is the only shared spine. */
+function panelColumns(kind: 'fp' | 'points' | 'usage' | 'move', opts: { week: number; lastWeek: number; move?: Movement['kind']; onPlan?: (p: Player) => void }): Column<Target>[] {
   const identity: Column<Target>[] = [
     { key: 'name', header: 'Player', render: (t) => <PlayerCell p={t} />, sort: (t) => t.name },
     { key: 'pos', header: 'Pos', render: (t) => <Pos pos={t.position} />, sort: (t) => POS_ORDER.indexOf(t.position), align: 'center' },
     { key: 'opp', header: `Wk ${opts.week}`, title: 'Opponent the week you are claiming into', render: (t) => <span className={t.on_bye ? 'text-stone-400' : ''}>{t.on_bye ? 'BYE' : t.opponent ?? '—'}</span>, sort: (t) => t.opponent },
   ]
-  // The usage panel is ordered on snap share and volume *together*, so that combined rank is the
-  // column it sorts by — sorting on snap share alone would silently contradict the ranking.
-  const usage: Column<Target> = {
-    key: 'usage_score', header: 'Usage', title: 'Snap share and volume combined, each ranked against other available players at the same position. 100% = the most-used player available at that spot.',
-    render: (t) => t.usage_score == null
-      ? <span className="text-stone-300">·</span>
-      : <span className={t.usage_score >= 0.85 ? 'font-semibold text-emerald-700' : 'text-stone-700'}>{Math.round(t.usage_score * 100)}</span>,
-    sort: (t) => t.usage_score, align: 'right', desc: true,
+  const num = (v: number | null | undefined, cls = '') =>
+    v == null ? <span className="text-stone-300">·</span> : <span className={cls}>{v}</span>
+
+  let lead: Column<Target>[] = []
+  if (kind === 'fp') {
+    lead = [{
+      key: 'fp_waiver', header: 'FP', title: "Rank on FantasyPros' waiver-wire shortlist (10 experts, ~50 players)",
+      render: (t) => t.fp_waiver_rank == null ? <span className="text-stone-300">·</span>
+        : <span className="font-semibold text-violet-800">{t.fp_waiver_rank}<span className="ml-1 text-[10px] font-normal text-violet-500">{t.fp_waiver_pos_rank}</span></span>,
+      sort: (t) => t.fp_waiver_rank ?? 9999, align: 'right',
+    }]
+  } else if (kind === 'points') {
+    lead = [{
+      key: 'last_week_pts', header: `Wk ${opts.lastWeek}`, title: `Fantasy points scored in week ${opts.lastWeek}, in this league's scoring`,
+      render: (t) => t.last_week_pts == null ? <span className="text-stone-300">·</span>
+        : <span className={t.last_week_pts >= 15 ? 'font-semibold text-emerald-700' : ''}>{fmt(t.last_week_pts)}</span>,
+      sort: (t) => t.last_week_pts, align: 'right', desc: true,
+    }]
+  } else if (kind === 'usage') {
+    lead = [
+      {
+        key: 'usage_score', header: 'Use', title: 'Snap share and volume together, each ranked against other available players at the same position. 100 = the most-used player available at that spot.',
+        render: (t) => t.usage_score == null ? <span className="text-stone-300">·</span>
+          : <span className={t.usage_score >= 0.85 ? 'font-semibold text-emerald-700' : 'text-stone-600'}>{Math.round(t.usage_score * 100)}</span>,
+        sort: (t) => t.usage_score, align: 'right', desc: true,
+      },
+      {
+        key: 'lw_snap_pct', header: 'Snap%', title: `Share of the team's offensive snaps in week ${opts.lastWeek}`,
+        render: (t) => t.lw_snap_pct == null ? <span className="text-stone-300">·</span>
+          : <span className={t.lw_snap_pct >= 0.7 ? 'font-semibold text-emerald-700' : 'text-stone-600'}>{Math.round(t.lw_snap_pct * 100)}%</span>,
+        sort: (t) => t.lw_snap_pct, align: 'right', desc: true,
+      },
+      { key: 'lw_targets', header: 'Tgt', title: `Times targeted in week ${opts.lastWeek}`, render: (t) => num(t.lw_targets, 'font-medium text-sky-800'), sort: (t) => t.lw_targets, align: 'right', desc: true },
+      { key: 'lw_carries', header: 'Car', title: `Rushing attempts in week ${opts.lastWeek}`, render: (t) => num(t.lw_carries, 'font-medium text-amber-800'), sort: (t) => t.lw_carries, align: 'right', desc: true },
+    ]
+  } else if (opts.move === 'sleeper') {
+    lead = [
+      { key: 'adds_24h', header: 'Adds', title: 'Added across all Sleeper leagues in the last 24 hours', render: (t) => t.adds_24h ? <span className="font-semibold text-emerald-700">{fmtInt(t.adds_24h)}</span> : <span className="text-stone-300">·</span>, sort: (t) => t.adds_24h, align: 'right', desc: true },
+      { key: 'drops_24h', header: 'Drops', title: 'Dropped across all Sleeper leagues in the last 24 hours', render: (t) => t.drops_24h ? <span className="text-red-700">{fmtInt(t.drops_24h)}</span> : <span className="text-stone-300">·</span>, sort: (t) => t.drops_24h, align: 'right', desc: true },
+    ]
+  } else if (opts.move === 'espn') {
+    lead = [
+      { key: 'owned_change', header: 'Own Δ', title: 'Change in the percentage of ESPN teams rostering this player', render: (t) => t.owned_change == null ? <span className="text-stone-300">·</span> : <span className={t.owned_change > 0 ? 'font-semibold text-emerald-700' : 'text-red-700'}>{t.owned_change > 0 ? '+' : ''}{fmt(t.owned_change)}</span>, sort: (t) => t.owned_change, align: 'right', desc: true },
+      { key: 'owned', header: 'Own%', title: 'Percent of ESPN teams rostering this player now', render: (t) => pct(t.owned), sort: (t) => t.owned, align: 'right', desc: true },
+    ]
+  } else {
+    lead = [
+      { key: 'rank_delta', header: 'Rank Δ', title: "Places climbed from Yahoo's preseason rank to where it ranks him now", render: (t) => t.rank_delta == null ? <span className="text-stone-300">·</span> : <span className={t.rank_delta > 0 ? 'font-semibold text-emerald-700' : 'text-red-700'}>{t.rank_delta > 0 ? '+' : ''}{t.rank_delta}</span>, sort: (t) => t.rank_delta, align: 'right', desc: true },
+      { key: 'rank_actual', header: 'Now', title: "Where Yahoo ranks him today", render: (t) => num(t.rank_actual, 'text-stone-600'), sort: (t) => t.rank_actual, align: 'right' },
+    ]
   }
-  const adds: Column<Target> = {
-    key: 'adds_24h', header: 'Adds 24h', title: 'Times added across all Sleeper leagues in the last 24 hours',
-    render: (t) => t.adds_24h ? <span className="font-semibold text-emerald-700">{fmtInt(t.adds_24h)}</span> : <span className="text-stone-300">·</span>,
-    sort: (t) => t.adds_24h, align: 'right', desc: true,
-  }
-  const adds7: Column<Target> = {
-    key: 'adds_7d', header: '7d', title: 'Adds across Sleeper over the last 7 days — a slower read than the 24h spike',
-    render: (t) => t.adds_7d ? <span className="text-stone-600">{fmtInt(t.adds_7d)}</span> : <span className="text-stone-300">·</span>,
-    sort: (t) => t.adds_7d, align: 'right', desc: true,
-  }
-  const drops: Column<Target> = {
-    key: 'drops_24h', header: 'Drops 24h', title: 'Times dropped across all Sleeper leagues in the last 24 hours',
-    render: (t) => t.drops_24h ? <span className="font-medium text-red-700">{fmtInt(t.drops_24h)}</span> : <span className="text-stone-300">·</span>,
-    sort: (t) => t.drops_24h, align: 'right', desc: true,
-  }
-  const lead = kind === 'fp' ? [fpRank] : kind === 'points' ? [points]
-    : kind === 'trending' ? [adds, adds7, drops] : [usage, snap, tgt, car]
-  const rest = kind === 'fp' ? [points, snap, tgt, car]
-    : kind === 'points' ? [fpRank, snap, tgt, car]
-      : kind === 'trending' ? [fpRank, points, snap, tgt, car]
-        : [fpRank, points]
-  const cols: Column<Target>[] = [...lead, ...identity, ...rest,
-    { key: 'proj_week', header: `Wk ${opts.week} proj`, title: `Projected points for week ${opts.week}, in this league's scoring`, render: (t) => fmt(t.proj_week), sort: (t) => t.proj_week, align: 'right', desc: true },
-    { key: 'owned', header: 'Own%', title: 'Percent of Sleeper leagues rostering this player', render: (t) => pct(t.owned), sort: (t) => t.owned, align: 'right', desc: true },
-  ]
+
+  const cols = [...lead, ...identity]
   if (opts.onPlan) {
     cols.push({
       key: 'plan', header: '', render: (t) => (
-        <button onClick={() => opts.onPlan!(t)} className="rounded border border-stone-300 px-2 py-0.5 text-[11px] text-stone-700 hover:border-amber-400 hover:bg-amber-50">Plan</button>
+        <button onClick={() => opts.onPlan!(t)} className="rounded border border-stone-300 px-1.5 py-0.5 text-[10px] text-stone-700 hover:border-amber-400 hover:bg-amber-50">+</button>
       ), align: 'center',
     })
   }
   return cols
 }
 
-/** One ranked panel: a heading that says what the order means, then the table. */
+/** One ranked panel. The table scrolls inside a fixed height so four panels stay on one screen
+ * instead of turning the page into a column of tables. */
 function Panel({ title, blurb, rows, columns, sortKey, empty }: {
   title: string; blurb: string; rows: Target[]; columns: Column<Target>[]; sortKey: string; empty: string
 }) {
   return (
-    <section className="space-y-1.5">
-      <div>
-        <h2 className="text-[13px] font-semibold text-stone-800">{title} <span className="ml-1 text-[11px] font-normal text-stone-400">{rows.length}</span></h2>
-        <p className="text-[11px] text-stone-500">{blurb}</p>
+    <section className="flex min-w-0 flex-col rounded-md border border-stone-200 bg-white">
+      <div className="border-b border-stone-200 px-3 py-2">
+        <h2 className="text-[12.5px] font-semibold text-stone-800">{title} <span className="ml-0.5 text-[11px] font-normal text-stone-400">{rows.length}</span></h2>
+        <p className="mt-0.5 text-[11px] leading-snug text-stone-500">{blurb}</p>
       </div>
       {rows.length === 0
-        ? <p className="rounded-md border border-stone-200 bg-white px-3 py-2 text-[12px] text-stone-500">{empty}</p>
-        : <DataTable rows={rows} columns={columns} rowKey={(t) => t.player_id} initialSort={{ key: sortKey, dir: sortKey === 'fp_waiver' ? 'asc' : 'desc' }} rowClass={gameDayRowClass} />}
+        ? <p className="px-3 py-2 text-[12px] text-stone-500">{empty}</p>
+        : (
+          <div className="max-h-[22rem] overflow-y-auto">
+            <DataTable rows={rows} columns={columns} rowKey={(t) => t.player_id} initialSort={{ key: sortKey, dir: sortKey === 'fp_waiver' ? 'asc' : 'desc' }} rowClass={gameDayRowClass} />
+          </div>
+        )}
     </section>
   )
 }
@@ -398,7 +391,7 @@ export default function Waivers() {
   const fpCols = useMemo(() => panelColumns('fp', colOpts), [colOpts])
   const ptsCols = useMemo(() => panelColumns('points', colOpts), [colOpts])
   const useCols = useMemo(() => panelColumns('usage', colOpts), [colOpts])
-  const trendCols = useMemo(() => panelColumns('trending', colOpts), [colOpts])
+  const moveCols = useMemo(() => panelColumns('move', { ...colOpts, move: data?.movement?.kind }), [colOpts, data?.movement?.kind])
 
   if (!league) return <Spinner />
   const t = league.my_team
@@ -455,27 +448,27 @@ export default function Waivers() {
 
       {data && tab === 'targets' && (
         <div className="flex flex-col gap-3 lg:flex-row lg:items-start">
-          <div className="min-w-0 flex-1 space-y-5">
+          <div className="grid min-w-0 flex-1 gap-3 xl:grid-cols-2">
             <Panel
               title="FantasyPros waiver list" sortKey="fp_waiver" rows={panels.fp} columns={fpCols}
-              blurb={`Their shortlist for week ${targetWeek}, in their order — 10 experts, and the forward-looking view.`}
+              blurb={`Their week ${targetWeek} shortlist, in their order — 10 experts, and the only forward-looking read here.`}
               empty="Nobody available is on this week's FantasyPros waiver list."
             />
             <Panel
               title={`Week ${lastWeek} points`} sortKey="last_week_pts" rows={panels.points} columns={ptsCols}
-              blurb={`What they actually scored last week in this league's scoring. Quarterbacks top this on raw points — filter by position to read it within a spot.`}
+              blurb={`What they actually scored, in this league's scoring. Quarterbacks top this on raw points — filter by position to read it within a spot.`}
               empty={`Nobody available scored in week ${lastWeek}.`}
             />
             <Panel
               title="Snap share and volume" sortKey="usage_score" rows={panels.usage} columns={useCols}
-              blurb={`Week ${lastWeek} usage — targets for receivers and tight ends, carries for backs, each ranked against others at the same position. Leads scoring, so it catches a role change before the points show up. Quarterbacks excluded.`}
+              blurb={`Week ${lastWeek} usage — targets for receivers and tight ends, carries for backs, ranked within position. Leads scoring, so it catches a role change early. No quarterbacks.`}
               empty="No usage recorded for available players last week."
             />
-            {data.by_trending && (
+            {data.movement && data.by_trending && (
               <Panel
-                title="Sleeper adds and drops" sortKey="adds_24h" rows={panels.trending} columns={trendCols}
-                blurb="What every Sleeper manager is doing right now, league-wide. The fastest signal of the four and the noisiest — it moves on news before the box score or the experts catch up, and it moves just as hard on hype."
-                empty="Nobody available is trending on Sleeper."
+                title={data.movement.label} sortKey={data.movement.kind === 'sleeper' ? 'adds_24h' : data.movement.kind === 'espn' ? 'owned_change' : 'rank_delta'}
+                rows={panels.trending} columns={moveCols} blurb={data.movement.blurb}
+                empty="Nothing is moving in this league's pool."
               />
             )}
           </div>

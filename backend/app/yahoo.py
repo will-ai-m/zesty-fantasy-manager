@@ -239,8 +239,30 @@ def parse_home(soup: BeautifulSoup, league_id: str) -> dict:
 
 
 # --------------------------------------------------------------------------- pool / transactions parsing
+def _column_index(soup: BeautifulSoup) -> dict[str, int]:
+    """Map the players table's column labels to their cell positions.
+
+    Yahoo stacks two header rows (a group row — Fantasy / Rankings / Trends — over the real
+    labels), and the label row is the one whose cells line up with the data. Reading by label
+    rather than by a fixed offset means an added or reordered Yahoo column shifts nothing.
+    """
+    for tr in soup.find_all("tr"):
+        labels = [th.get_text(" ", strip=True) for th in tr.find_all("th")]
+        if "% Ros" in labels:
+            return {name: i for i, name in enumerate(labels)}
+    return {}
+
+
 def parse_pool_page(soup: BeautifulSoup) -> list[dict]:
-    """Players page -> [{yahoo_id, name, team, position, injury, owned, status}] for available players."""
+    """Players page -> [{yahoo_id, name, team, position, injury, owned, status, rank_preseason,
+    rank_actual}] for available players.
+
+    The two ranks are Yahoo's own: where it had the player before the season, and where he sits
+    now. The gap between them is Yahoo's read on who is breaking out — the nearest thing it
+    publishes to a trend, and unlike its research page's five-row "most added" widget, it covers
+    the whole pool.
+    """
+    cols = _column_index(soup)
     out: list[dict] = []
     for a in soup.select("a.name[data-ys-playerid], a.playernote[data-ys-playerid]"):
         if a.get("id", "").startswith("playernote"):  # dedupe: skip the icon anchor, keep the name anchor
@@ -250,11 +272,20 @@ def parse_pool_page(soup: BeautifulSoup) -> list[dict]:
         if not tr:
             continue
         rec = _player_row(a)
-        row_text = tr.get_text(" ", strip=True)
-        owned = re.search(r"(\d+)%", row_text)
-        rec["owned"] = float(owned.group(1)) if owned else None
+        cells = tr.find_all("td")
+
+        def cell(label: str) -> str | None:
+            i = cols.get(label)
+            return cells[i].get_text(" ", strip=True) if i is not None and i < len(cells) else None
+
+        rec["owned"] = _num((cell("% Ros") or "").rstrip("%")) if cell("% Ros") else None
+        if rec["owned"] is None:  # older markup without the labelled header
+            m = re.search(r"(\d+)%", tr.get_text(" ", strip=True))
+            rec["owned"] = float(m.group(1)) if m else None
+        rec["rank_preseason"] = _num(cell("Pre-Season"))
+        rec["rank_actual"] = _num(cell("Actual"))
         status = None
-        for td in tr.find_all("td"):
+        for td in cells:
             t = td.get_text(" ", strip=True)
             if t in ("FA", "W"):
                 status = {"FA": "FREEAGENT", "W": "WAIVERS"}[t]
@@ -478,6 +509,7 @@ def normalize_pool(rows: list[dict], xw: Crosswalk) -> tuple[dict[str, dict], di
             "yahoo_id": yid, "position": row.get("position"), "status": row.get("status"),
             "waiver_until": None, "owned": row.get("owned"), "owned_change": None,
             "injury_status": row.get("injury"),
+            "rank_preseason": row.get("rank_preseason"), "rank_actual": row.get("rank_actual"),
         }
     return info, synthetic
 

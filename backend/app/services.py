@@ -491,6 +491,7 @@ class Service:
         if next_proj is None:
             next_proj = await self._proj_index(season, week + 1)
 
+        usage = await self._usage_index(season, week - 1)
         info, syn = yahoo_normalize_pool(pool, xw)
         merged_players = dict(players)
         merged_players.update(b.get("synthetic", {}))
@@ -621,6 +622,12 @@ class Service:
             row["platform_status"] = yh.get("status")
             row["waiver_until"] = yh.get("waiver_until")
             row["owned_change"] = yh.get("owned_change")
+            row["rank_preseason"] = yh.get("rank_preseason")
+            row["rank_actual"] = yh.get("rank_actual")
+            pre, act = yh.get("rank_preseason"), yh.get("rank_actual")
+            # Ranks count upward, so preseason minus actual is positive for a player who has
+            # climbed: Yahoo's own read on who is breaking out.
+            row["rank_delta"] = round(pre - act) if pre and act else None
             if row.get("injury_status") is None and yh.get("injury_status"):
                 row["injury_status"] = yh["injury_status"]
         return row
@@ -728,13 +735,30 @@ class Service:
         by_points = sorted(
             [r for r in pool if r.get("last_week_pts") is not None], key=lambda r: -r["last_week_pts"])
         by_usage = wv.rank_by_usage(pool)
-        # Sleeper publishes league-wide add/drop counts. They describe the Sleeper player pool, so
-        # they are only shown for Sleeper leagues — on an ESPN or Yahoo league the same numbers
-        # would be describing a different set of managers making different decisions.
-        by_trending = sorted(
-            [r for r in pool if (r.get("adds_24h") or 0) > 0 or (r.get("drops_24h") or 0) > 0],
-            key=lambda r: -(r.get("adds_24h") or 0),
-        ) if lg.get("platform") == "sleeper" else None
+        # Each platform publishes its own read on which way a player is moving, and each means
+        # something different, so the panel is labelled per platform rather than pretending they
+        # are one metric: Sleeper counts adds and drops league-wide, ESPN gives the change in the
+        # percentage of teams rostering a player, and Yahoo gives the gap between where it ranked
+        # him before the season and where he sits now.
+        platform = lg.get("platform")
+        if platform == "sleeper":
+            movers = sorted([r for r in pool if (r.get("adds_24h") or 0) > 0 or (r.get("drops_24h") or 0) > 0],
+                            key=lambda r: -(r.get("adds_24h") or 0))
+            movement = {"kind": "sleeper", "label": "Sleeper adds and drops",
+                        "blurb": "What every Sleeper manager is doing right now, league-wide. The fastest signal here and the noisiest — it moves on news before the box score does, and just as hard on hype."}
+        elif platform == "espn":
+            movers = sorted([r for r in pool if r.get("owned_change") is not None and r["owned_change"] != 0],
+                            key=lambda r: -(r.get("owned_change") or 0))
+            movement = {"kind": "espn", "label": "ESPN ownership change",
+                        "blurb": "Change in the percentage of ESPN teams rostering each player. ESPN's own version of the add/drop wave, measured as a shift in ownership rather than a raw count."}
+        elif platform == "yahoo":
+            movers = sorted([r for r in pool if r.get("rank_delta") is not None],
+                            key=lambda r: -(r.get("rank_delta") or 0))
+            movement = {"kind": "yahoo", "label": "Yahoo rank movement",
+                        "blurb": "How far each player has climbed from Yahoo's preseason rank to where it ranks him now. Yahoo publishes no add counts outside a five-row widget, so this is its read on who is breaking out."}
+        else:
+            movers, movement = [], None
+        by_trending = movers if movement else None
 
         odds_weeks = [w for w in range(week, min(REGULAR_SEASON_WEEKS, week + 2) + 1)]
         odds_by_week = dict(zip(odds_weeks, await asyncio.gather(*(self._team_odds(season, w) for w in odds_weeks))))
@@ -754,6 +778,7 @@ class Service:
             "by_points": by_points[:40],
             "by_usage": by_usage[:40],
             "by_trending": by_trending[:40] if by_trending is not None else None,
+            "movement": movement,
             "streamers": streamers,
             "stream_weeks": odds_weeks,
             "articles": self._articles(season, week),

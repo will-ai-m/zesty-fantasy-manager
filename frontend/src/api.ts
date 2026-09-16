@@ -160,7 +160,14 @@ export interface ArticleDigest { week: number; sources: ArticleSource[]; items: 
  * panel, where it is the blend of snap-share and volume rank that orders it. */
 export interface Target extends Player {
   usage_score?: number
+  /** Yahoo only: preseason rank minus current rank. Positive means he has climbed. */
+  rank_delta?: number | null
+  rank_preseason?: number | null
+  rank_actual?: number | null
 }
+
+/** Which movement signal this platform publishes, and how to label it. */
+export interface Movement { kind: 'sleeper' | 'espn' | 'yahoo'; label: string; blurb: string }
 
 /** A K or D/ST ranked for one specific week on Vegas implied totals. */
 export interface Streamer extends Player {
@@ -184,6 +191,7 @@ export interface WaiversResponse {
   /** Sleeper's league-wide add/drop counts. Null for ESPN and Yahoo leagues, whose managers
    * are a different population than the one these counts describe. */
   by_trending: Target[] | null
+  movement: Movement | null
   streamers: { DEF: StreamWeek[]; K: StreamWeek[] }
   stream_weeks: number[]
   articles: ArticleDigest | null
