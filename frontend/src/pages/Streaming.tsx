@@ -29,24 +29,29 @@ function band(v: number | null): 'good' | 'ok' | 'bad' | null {
   if (v == null) return null
   return v <= 20.5 ? 'good' : v >= 24.5 ? 'bad' : 'ok'
 }
+// The band fills the whole cell, opponent and number together, so a row reads as a strip of
+// colour at a glance rather than as four small chips you have to look at one at a time. The
+// opponent sits a shade lighter than the number so the number still leads.
 const BAND = {
-  good: 'bg-emerald-50 text-emerald-800 font-semibold',
-  ok: 'bg-amber-50/70 text-amber-800',
-  bad: 'bg-red-50/70 text-red-800',
+  good: { cell: 'bg-emerald-100/70', opp: 'text-emerald-700/70', num: 'text-emerald-900 font-semibold' },
+  ok: { cell: 'bg-amber-100/60', opp: 'text-amber-700/70', num: 'text-amber-900' },
+  bad: { cell: 'bg-red-100/60', opp: 'text-red-700/70', num: 'text-red-900' },
 }
 
 /** One week of a streamer's schedule: who they play and the number that matters. */
 function GameCell({ g, pos, lead }: { g: Streamer['weeks'][number] | undefined; pos: 'K' | 'DEF'; lead: boolean }) {
   if (!g || !g.matchup) return <td className="px-2 py-1.5 text-center text-[11px] text-stone-300">bye</td>
   const v = pos === 'DEF' ? g.opp_implied : g.implied
-  // A defence is graded on the band; a kicker's cell just marks the offences priced to score.
-  const tone = pos === 'DEF'
-    ? (band(v) ? BAND[band(v)!] : 'text-stone-400')
-    : v != null && v >= 25 ? 'font-semibold text-emerald-700' : 'text-stone-400'
+  // A defence is graded on the band, which colours the cell. A kicker's cell is left plain and
+  // only marks the offences priced to score — the kicker table is read down its own columns.
+  const b = pos === 'DEF' ? band(v) : null
+  const tone = b ? BAND[b] : null
   return (
-    <td className={`px-2 py-1.5 text-center ${lead ? 'ring-1 ring-inset ring-stone-200' : ''}`}>
-      <div className="text-[11px] text-stone-600">{g.matchup}</div>
-      <div className={`mt-0.5 rounded px-1 text-[11px] tabular-nums ${tone}`}>{v == null ? '—' : fmt(v, 1)}</div>
+    <td className={`px-2 py-1.5 text-center ${tone?.cell ?? ''} ${lead ? 'ring-1 ring-inset ring-stone-300' : ''}`}>
+      <div className={`text-[11px] ${tone?.opp ?? 'text-stone-600'}`}>{g.matchup}</div>
+      <div className={`mt-0.5 text-[11px] tabular-nums ${tone?.num ?? (pos === 'K' && v != null && v >= 25 ? 'font-semibold text-emerald-700' : 'text-stone-400')}`}>
+        {v == null ? '—' : fmt(v, 1)}
+      </div>
     </td>
   )
 }
@@ -190,9 +195,9 @@ export default function Streaming() {
               The next {weeks.length} weeks run across each row so you can take a good matchup before someone else does.
             </span>
             <span className="flex items-center gap-1.5 text-[11px]">
-              <span className="rounded bg-emerald-50 px-1.5 py-0.5 font-semibold text-emerald-800">≤20.5 soft</span>
-              <span className="rounded bg-amber-50/70 px-1.5 py-0.5 text-amber-800">20.5–24.5</span>
-              <span className="rounded bg-red-50/70 px-1.5 py-0.5 text-red-800">≥24.5 avoid</span>
+              <span className="rounded bg-emerald-100/70 px-1.5 py-0.5 font-semibold text-emerald-900">≤20.5 soft</span>
+              <span className="rounded bg-amber-100/60 px-1.5 py-0.5 text-amber-900">20.5–24.5</span>
+              <span className="rounded bg-red-100/60 px-1.5 py-0.5 text-red-900">≥24.5 avoid</span>
             </span>
           </div>
           <StreamTable pos="DEF" rows={data.streamers.DEF} weeks={weeks} onPlan={onPlan} />
