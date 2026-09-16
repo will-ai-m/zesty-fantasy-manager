@@ -7,12 +7,17 @@ team in targets but nobody has ranked yet. So each signal gets its own ordered l
 them against each other:
 
   by_fantasypros  their waiver shortlist, in their order — the forward-looking expert view.
-  by_points       what players actually scored last week, in this league's scoring.
-  by_usage        snap share and volume, the leading indicator. Quarterbacks are left out: they
-                  take every snap and their attempts say nothing about whether to add them.
+  by_production   what happened on the field last week: points first, then volume, then snap
+                  share, each as the tie-break on the one before it.
 
-Volume is read per position, because the touch that matters differs: targets for a receiver or
-tight end, carries for a back.
+Production reads down that order because the three answer progressively softer questions. Points
+are the result and settle it outright where they differ. They rarely tie above zero — but a large
+part of any waiver pool scored nothing at all, and that is exactly where the other two earn their
+place: among players who put up nothing, the one who ran a route on 80% of the snaps and saw six
+targets is a different proposition from the one who took two snaps. Volume is the touch that
+defines the role — targets for a receiver or tight end, carries *and* targets for a back, since a
+back who catches is being used either way — and snap share is the last word on whether the staff
+put him on the field.
 
 **Streamers** are a different question entirely. K and D/ST are matchup plays with almost no
 week-to-week carryover, so the matchup carries most of the weight: a defence is good this week if
@@ -30,66 +35,44 @@ from __future__ import annotations
 
 from typing import Any
 
-# The touch that defines a role at each position. Counts are compared against other players at
-# the same position rather than against a fixed threshold (see _percentile_within).
-VOLUME_STAT = {"WR": "lw_targets", "TE": "lw_targets", "RB": "lw_carries"}
+# The touches that define a role at each position. A back's receiving work counts towards his
+# volume as much as his carries do; a receiver has only the one kind of touch.
+VOLUME_STATS = {"WR": ("lw_targets",), "TE": ("lw_targets",), "RB": ("lw_carries", "lw_targets")}
 
 
 def _clamp(x: float, lo: float = 0.0, hi: float = 1.0) -> float:
     return max(lo, min(hi, x))
 
 
-def _percentile_within(rows: list[dict], value) -> dict[str, float]:
-    """{player_id: 0..1} by rank of `value` among the players at the same position who have one.
+def volume(row: dict) -> float | None:
+    """Last week's defining touches: targets for a receiver or tight end, carries plus targets
+    for a back. None when the position has no such touch, or when none were recorded."""
+    stats = VOLUME_STATS.get(row.get("position") or "")
+    if not stats:
+        return None
+    counts = [row.get(k) for k in stats]
+    return float(sum(c for c in counts if c)) if any(c is not None for c in counts) else None
 
-    Raw counts don't compare across positions — a quarterback throwing 35 times and a receiver
-    seeing 9 targets are both full-time roles, and a quarterback's 25 points is an ordinary week
-    where a tight end's would be a great one. Ranking each position against itself is what makes
-    "best available" mean the same thing in every row.
+
+def rank_by_production(rows: list[dict]) -> list[dict]:
+    """Order by last week's points, breaking ties on volume and then on snap share.
+
+    Strictly in that order rather than blended into a score. Points are the outcome and outrank
+    the inputs wherever they separate two players at all; volume and snap share decide the rest,
+    which in a waiver pool is most of it, since so much of the pool scored nothing. Reading them
+    as a fixed order rather than a weighted sum keeps every row explicable from the columns on
+    screen — you can see which number put a player where he is.
+
+    Players with nothing recorded at all last week are dropped; there is no reading to give.
     """
-    by_pos: dict[str, list[tuple[str, float]]] = {}
-    for r in rows:
-        v = value(r)
-        if v is None:
-            continue
-        by_pos.setdefault(r.get("position") or "", []).append((r["player_id"], float(v)))
-    out: dict[str, float] = {}
-    for group in by_pos.values():
-        group.sort(key=lambda kv: kv[1])
-        n = len(group)
-        for i, (pid, _) in enumerate(group):
-            out[pid] = 1.0 if n == 1 else i / (n - 1)
-    return out
-
-
-def _volume_count(row: dict) -> float | None:
-    stat = VOLUME_STAT.get(row.get("position") or "")
-    return row.get(stat) if stat else None
-
-
-def rank_by_usage(rows: list[dict]) -> list[dict]:
-    """Order by snap share first, then by volume as the tie-break.
-
-    Snap share leads: it says whether the coaching staff is putting him on the field at all, which
-    is the thing that has to be true before volume can follow. Volume — targets for a receiver or
-    tight end, carries for a back — separates the players who are out there and being used from
-    the ones who are merely out there.
-
-    The two are ranked rather than blended, so a 90%-snap receiver always sits above a 60%-snap
-    one no matter how the target counts fall. Volume is compared within position, since 9 targets
-    and 9 carries are not the same week's work.
-
-    Quarterbacks are excluded outright: they play every snap and throw every pass their team
-    throws, so both numbers are constants that say nothing about whether to add one.
-    """
-    pool = [r for r in rows if r.get("position") in VOLUME_STAT and r.get("position") != "QB"]
-    vol_rank = _percentile_within(pool, _volume_count)
     out = []
-    for r in pool:
-        if r.get("lw_snap_pct") is None and _volume_count(r) is None:
-            continue  # didn't play last week; nothing to rank
-        out.append({**r, "volume_rank": round(vol_rank.get(r["player_id"], 0.0), 3)})
-    out.sort(key=lambda r: (-(r.get("lw_snap_pct") or 0.0), -r["volume_rank"]))
+    for r in rows:
+        vol = volume(r)
+        if r.get("last_week_pts") is None and vol is None and r.get("lw_snap_pct") is None:
+            continue
+        out.append({**r, "lw_volume": vol})
+    out.sort(key=lambda r: (-(r.get("last_week_pts") or 0.0), -(r["lw_volume"] or 0.0),
+                            -(r.get("lw_snap_pct") or 0.0)))
     return out
 
 

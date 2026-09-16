@@ -209,8 +209,8 @@ export interface WaiversResponse {
   week: number
   ros_end_week: number
   by_fantasypros: Target[]
-  by_points: Target[]
-  by_usage: Target[]
+  /** Last week on the field: points, then volume, then snap share as successive tie-breaks. */
+  by_production: Target[]
   /** Sleeper's league-wide add/drop counts. Null for ESPN and Yahoo leagues, whose managers
    * are a different population than the one these counts describe. */
   by_trending: Target[] | null

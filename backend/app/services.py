@@ -821,15 +821,14 @@ class Service:
         season = str(b["league"]["season"])
         lg = self._league_summary(b)
 
-        # Three reads on the same pool rather than one blended ranking: the expert shortlist,
-        # what was actually scored, and the usage that leads scoring. Kept separate so the
-        # places they disagree stay visible. K and D/ST belong to the streamers below.
+        # Two reads on the same pool rather than one blended ranking: the expert shortlist, which
+        # looks forward, and what actually happened on the field last week, which looks back.
+        # Kept separate so the places they disagree stay visible. K and D/ST belong to the
+        # streamers below.
         pool = [r for r in free if r["position"] not in ("K", "DEF")]
         by_fantasypros = sorted(
             [r for r in pool if r.get("fp_waiver_rank")], key=lambda r: r["fp_waiver_rank"])
-        by_points = sorted(
-            [r for r in pool if r.get("last_week_pts") is not None], key=lambda r: -r["last_week_pts"])
-        by_usage = wv.rank_by_usage(pool)
+        by_production = wv.rank_by_production(pool)
         # Each platform publishes its own read on which way a player is moving, and each means
         # something different, so the panel is labelled per platform rather than pretending they
         # are one metric: Sleeper counts adds and drops league-wide, ESPN gives the change in the
@@ -889,8 +888,7 @@ class Service:
             "week": week,
             "ros_end_week": ctx["ros_end_week"],
             "by_fantasypros": by_fantasypros[:40],
-            "by_points": by_points[:40],
-            "by_usage": by_usage[:40],
+            "by_production": by_production[:150],
             "by_trending": by_trending[:40] if by_trending is not None else None,
             "movement": movement,
             "streamers": streamers,

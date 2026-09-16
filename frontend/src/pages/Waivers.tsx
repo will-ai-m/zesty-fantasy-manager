@@ -137,7 +137,7 @@ export function playerColumns(opts: { week: number; rosEnd: number; onPlan?: (p:
 /** Each panel answers one question, so it carries only the columns that answer it. Everything a
  * player is doing elsewhere is a click away in the drawer; repeating all of it in all four panels
  * is what made the page a scroll. Identity (name, position, opponent) is the only shared spine. */
-function panelColumns(kind: 'fp' | 'points' | 'usage' | 'move', opts: { week: number; lastWeek: number; move?: Movement['kind']; claimed?: Map<string, number | null>; onPlan?: (p: Player) => void }): Column<Target>[] {
+function panelColumns(kind: 'fp' | 'production' | 'move', opts: { week: number; lastWeek: number; move?: Movement['kind']; claimed?: Map<string, number | null>; onPlan?: (p: Player) => void }): Column<Target>[] {
   const identity: Column<Target>[] = [
     {
       key: 'name', header: 'Player',
@@ -164,6 +164,7 @@ function panelColumns(kind: 'fp' | 'points' | 'usage' | 'move', opts: { week: nu
     v == null ? <span className="text-stone-300">·</span> : <span className={cls}>{v}</span>
 
   let lead: Column<Target>[] = []
+  let trail: Column<Target>[] = []
   if (kind === 'fp') {
     lead = [{
       key: 'fp_waiver', header: 'FP', title: "Rank on FantasyPros' waiver-wire shortlist (10 experts, ~50 players)",
@@ -171,23 +172,22 @@ function panelColumns(kind: 'fp' | 'points' | 'usage' | 'move', opts: { week: nu
         : <span className="font-semibold text-violet-800">{t.fp_waiver_rank}<span className="ml-1 text-[10px] font-normal text-violet-500">{t.fp_waiver_pos_rank}</span></span>,
       sort: (t) => t.fp_waiver_rank ?? 9999, align: 'right',
     }]
-  } else if (kind === 'points') {
+  } else if (kind === 'production') {
     lead = [{
-      key: 'last_week_pts', header: `Wk ${opts.lastWeek}`, title: `Fantasy points scored in week ${opts.lastWeek}, in this league's scoring`,
+      key: 'last_week_pts', header: `Wk ${opts.lastWeek}`, title: `Fantasy points scored in week ${opts.lastWeek}, in this league's scoring — the first thing this panel sorts on`,
       render: (t) => t.last_week_pts == null ? <span className="text-stone-300">·</span>
         : <span className={t.last_week_pts >= 15 ? 'font-semibold text-emerald-700' : ''}>{fmt(t.last_week_pts)}</span>,
       sort: (t) => t.last_week_pts, align: 'right', desc: true,
     }]
-  } else if (kind === 'usage') {
-    lead = [
+    trail = [
+      { key: 'lw_targets', header: 'Tgt', title: `Times targeted in week ${opts.lastWeek}. Part of the volume tie-break at every position.`, render: (t) => num(t.lw_targets, 'font-medium text-sky-800'), sort: (t) => t.lw_targets, align: 'right', desc: true },
+      { key: 'lw_carries', header: 'Car', title: `Rushing attempts in week ${opts.lastWeek}. Added to targets for a back's volume.`, render: (t) => num(t.lw_carries, 'font-medium text-amber-800'), sort: (t) => t.lw_carries, align: 'right', desc: true },
       {
-        key: 'lw_snap_pct', header: 'Snap%', title: `Share of the team's offensive snaps in week ${opts.lastWeek}`,
+        key: 'lw_snap_pct', header: 'Snap%', title: `Share of the team's offensive snaps in week ${opts.lastWeek} — the last tie-break, after points and volume`,
         render: (t) => t.lw_snap_pct == null ? <span className="text-stone-300">·</span>
           : <span className={t.lw_snap_pct >= 0.7 ? 'font-semibold text-emerald-700' : 'text-stone-600'}>{Math.round(t.lw_snap_pct * 100)}%</span>,
         sort: (t) => t.lw_snap_pct, align: 'right', desc: true,
       },
-      { key: 'lw_targets', header: 'Tgt', title: `Times targeted in week ${opts.lastWeek}`, render: (t) => num(t.lw_targets, 'font-medium text-sky-800'), sort: (t) => t.lw_targets, align: 'right', desc: true },
-      { key: 'lw_carries', header: 'Car', title: `Rushing attempts in week ${opts.lastWeek}`, render: (t) => num(t.lw_carries, 'font-medium text-amber-800'), sort: (t) => t.lw_carries, align: 'right', desc: true },
     ]
   } else if (opts.move === 'sleeper') {
     lead = [
@@ -206,7 +206,7 @@ function panelColumns(kind: 'fp' | 'points' | 'usage' | 'move', opts: { week: nu
     ]
   }
 
-  const cols = [...lead, ...identity]
+  const cols = [...lead, ...identity, ...trail]
   if (opts.onPlan) {
     cols.push({
       key: 'plan', header: '', render: (t) => (
@@ -372,10 +372,10 @@ export default function Waivers() {
   const [hideOut, setHideOut] = useState(false)
   const [relevantOnly, setRelevantOnly] = useState(true)
   const [fpOnly, setFpOnly] = useState(false)
-  // The points panel filters itself. Quarterbacks out-score everyone on raw points, so an
-  // unfiltered list is a list of quarterbacks; FLEX is the default because that is the pool you
-  // are usually shopping in. It overrides the page filter for this panel only.
-  const [ptsPos, setPtsPos] = useState('FLEX')
+  // The production panel filters itself. Quarterbacks out-score everyone on raw points and take
+  // every snap, so an unfiltered list is a list of quarterbacks; FLEX is the default because that
+  // is the pool you are usually shopping in. It overrides the page filter for this panel only.
+  const [prodPos, setProdPos] = useState('FLEX')
 
   // The week claims process into, and the week whose box score we are reading.
   const targetWeek = data?.week ?? week
@@ -411,16 +411,15 @@ export default function Waivers() {
     }
     return {
       fp: (data?.by_fantasypros ?? []).filter(keep),
-      points: (data?.by_points ?? []).filter((t) => {
-        if (ptsPos === 'FLEX' ? !['RB', 'WR', 'TE'].includes(t.position) : ptsPos !== 'ALL' && t.position !== ptsPos) return false
+      production: (data?.by_production ?? []).filter((t) => {
+        if (prodPos === 'FLEX' ? !['RB', 'WR', 'TE'].includes(t.position) : prodPos !== 'ALL' && t.position !== prodPos) return false
         if (hideOut && OUT_STATUSES.has(t.injury_status ?? '')) return false
         if (q && !(t.name.toLowerCase().includes(q) || (t.team ?? '').toLowerCase() === q)) return false
         return true
       }),
-      usage: (data?.by_usage ?? []).filter(keep),
       trending: (data?.by_trending ?? []).filter(keep),
     }
-  }, [data, pos, search, hideOut, ptsPos])
+  }, [data, pos, search, hideOut, prodPos])
 
   const browseColumns = useMemo(() => playerColumns({
     week: targetWeek, rosEnd: data?.ros_end_week ?? 17, showRank: true, vsMine: true, espn: league?.platform === 'espn', fp: true, fpWaiver: true, usage: lastWeek,
@@ -436,8 +435,7 @@ export default function Waivers() {
     week: targetWeek, lastWeek, claimed, onPlan: (p: Player) => leagueId && openPlan({ leagueId, add: p }),
   }), [targetWeek, lastWeek, claimed, leagueId, openPlan])
   const fpCols = useMemo(() => panelColumns('fp', colOpts), [colOpts])
-  const ptsCols = useMemo(() => panelColumns('points', colOpts), [colOpts])
-  const useCols = useMemo(() => panelColumns('usage', colOpts), [colOpts])
+  const prodCols = useMemo(() => panelColumns('production', colOpts), [colOpts])
   const moveCols = useMemo(() => panelColumns('move', { ...colOpts, move: data?.movement?.kind }), [colOpts, data?.movement?.kind])
 
   if (!league) return <Spinner />
@@ -495,19 +493,13 @@ export default function Waivers() {
         <div className="flex flex-col gap-3 lg:flex-row lg:items-start">
           <div className="min-w-0 flex-1 space-y-3">
             {data.pending.length > 0 && <PendingStrip claims={data.pending} usesFaab={(league.waiver?.budget ?? 0) > 0} />}
-            <div className="grid gap-3 xl:grid-cols-2">
             <Panel
-              title="FantasyPros waiver list" sortKey="fp_waiver" rows={panels.fp} columns={fpCols}
-              blurb={`Their week ${targetWeek} shortlist, in their order — 10 experts, and the only forward-looking read here.`}
-              empty="Nobody available is on this week's FantasyPros waiver list."
-            />
-            <Panel
-              title={`Week ${lastWeek} points`} sortKey="last_week_pts" rows={panels.points} columns={ptsCols}
-              blurb={`What they actually scored, in this league's scoring. Quarterbacks out-score every other position on raw points, so this panel filters itself.`}
-              empty={`Nobody available scored in week ${lastWeek}${ptsPos === 'ALL' ? '' : ` at ${ptsPos}`}.`}
+              title={`Week ${lastWeek} on the field`} sortKey="last_week_pts" rows={panels.production} columns={prodCols}
+              blurb={`Points first, then volume, then snap share — each one breaking ties in the one before it. Most of a waiver pool scores nothing, and that is where volume and snaps decide the order: targets for a receiver or tight end, carries and targets together for a back. Quarterbacks out-score everyone and play every snap, so this panel picks its own position.`}
+              empty={`Nothing recorded for available players in week ${lastWeek}${prodPos === 'ALL' ? '' : ` at ${prodPos}`}.`}
               control={
                 <select
-                  value={ptsPos} onChange={(e) => setPtsPos(e.target.value)}
+                  value={prodPos} onChange={(e) => setProdPos(e.target.value)}
                   title="Position shown in this panel only"
                   className="rounded border border-stone-200 bg-white px-1.5 py-0.5 text-[11px] text-stone-700"
                 >
@@ -515,10 +507,11 @@ export default function Waivers() {
                 </select>
               }
             />
+            <div className="grid gap-3 xl:grid-cols-2">
             <Panel
-              title="Snap share and volume" sortKey="lw_snap_pct" rows={panels.usage} columns={useCols}
-              blurb={`Ranked on week ${lastWeek} snap share first, then volume — targets for receivers and tight ends, carries for backs. Snaps say whether he is on the field at all; volume says whether they are using him. No quarterbacks.`}
-              empty="No usage recorded for available players last week."
+              title="FantasyPros waiver list" sortKey="fp_waiver" rows={panels.fp} columns={fpCols}
+              blurb={`Their week ${targetWeek} shortlist, in their order — 10 experts, and the only forward-looking read here.`}
+              empty="Nobody available is on this week's FantasyPros waiver list."
             />
             {data.movement && data.by_trending && (
               <Panel
