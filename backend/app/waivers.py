@@ -61,24 +61,28 @@ def _volume_count(row: dict) -> float | None:
 
 
 def rank_by_usage(rows: list[dict]) -> list[dict]:
-    """Order by snap share and volume together, each ranked against the other available players
-    at the same position — 9 targets means something different for a receiver than 9 carries does
-    for a back, and neither compares to a quarterback's 35 attempts.
+    """Order by snap share first, then by volume as the tie-break.
+
+    Snap share leads: it says whether the coaching staff is putting him on the field at all, which
+    is the thing that has to be true before volume can follow. Volume — targets for a receiver or
+    tight end, carries for a back — separates the players who are out there and being used from
+    the ones who are merely out there.
+
+    The two are ranked rather than blended, so a 90%-snap receiver always sits above a 60%-snap
+    one no matter how the target counts fall. Volume is compared within position, since 9 targets
+    and 9 carries are not the same week's work.
 
     Quarterbacks are excluded outright: they play every snap and throw every pass their team
     throws, so both numbers are constants that say nothing about whether to add one.
     """
     pool = [r for r in rows if r.get("position") in VOLUME_STAT and r.get("position") != "QB"]
-    snaps = _percentile_within(pool, lambda r: r.get("lw_snap_pct"))
-    vol = _percentile_within(pool, _volume_count)
+    vol_rank = _percentile_within(pool, _volume_count)
     out = []
     for r in pool:
-        pid = r["player_id"]
         if r.get("lw_snap_pct") is None and _volume_count(r) is None:
             continue  # didn't play last week; nothing to rank
-        r = {**r, "usage_score": round((snaps.get(pid, 0.0) + vol.get(pid, 0.0)) / 2, 3)}
-        out.append(r)
-    out.sort(key=lambda r: -r["usage_score"])
+        out.append({**r, "volume_rank": round(vol_rank.get(r["player_id"], 0.0), 3)})
+    out.sort(key=lambda r: (-(r.get("lw_snap_pct") or 0.0), -r["volume_rank"]))
     return out
 
 

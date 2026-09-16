@@ -159,7 +159,8 @@ export interface ArticleDigest { week: number; sources: ArticleSource[]; items: 
 /** A free agent in one of the three ranked panels. `usage_score` is only set in the usage
  * panel, where it is the blend of snap-share and volume rank that orders it. */
 export interface Target extends Player {
-  usage_score?: number
+  /** Usage panel only: volume rank within position, the tie-break behind snap share. */
+  volume_rank?: number
   /** Yahoo only: preseason rank minus current rank. Positive means he has climbed. */
   rank_delta?: number | null
   rank_preseason?: number | null

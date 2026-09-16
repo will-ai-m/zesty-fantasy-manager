@@ -1,4 +1,4 @@
-import { useMemo, useState } from 'react'
+import { useMemo, useState, type ReactNode } from 'react'
 import { useQuery } from '@tanstack/react-query'
 import { api, type ArticleDigest, type ArticleItem, type Movement, type Player, type Streamer, type Target } from '../api'
 import { fmt, fmtInt, gameDayRowClass, OUT_STATUSES, pct, POS_ORDER, shortDate } from '../lib/format'
@@ -164,12 +164,6 @@ function panelColumns(kind: 'fp' | 'points' | 'usage' | 'move', opts: { week: nu
   } else if (kind === 'usage') {
     lead = [
       {
-        key: 'usage_score', header: 'Use', title: 'Snap share and volume together, each ranked against other available players at the same position. 100 = the most-used player available at that spot.',
-        render: (t) => t.usage_score == null ? <span className="text-stone-300">·</span>
-          : <span className={t.usage_score >= 0.85 ? 'font-semibold text-emerald-700' : 'text-stone-600'}>{Math.round(t.usage_score * 100)}</span>,
-        sort: (t) => t.usage_score, align: 'right', desc: true,
-      },
-      {
         key: 'lw_snap_pct', header: 'Snap%', title: `Share of the team's offensive snaps in week ${opts.lastWeek}`,
         render: (t) => t.lw_snap_pct == null ? <span className="text-stone-300">·</span>
           : <span className={t.lw_snap_pct >= 0.7 ? 'font-semibold text-emerald-700' : 'text-stone-600'}>{Math.round(t.lw_snap_pct * 100)}%</span>,
@@ -208,13 +202,17 @@ function panelColumns(kind: 'fp' | 'points' | 'usage' | 'move', opts: { week: nu
 
 /** One ranked panel. The table scrolls inside a fixed height so four panels stay on one screen
  * instead of turning the page into a column of tables. */
-function Panel({ title, blurb, rows, columns, sortKey, empty }: {
+function Panel({ title, blurb, rows, columns, sortKey, empty, control }: {
   title: string; blurb: string; rows: Target[]; columns: Column<Target>[]; sortKey: string; empty: string
+  control?: ReactNode
 }) {
   return (
     <section className="flex min-w-0 flex-col rounded-md border border-stone-200 bg-white">
       <div className="border-b border-stone-200 px-3 py-2">
-        <h2 className="text-[12.5px] font-semibold text-stone-800">{title} <span className="ml-0.5 text-[11px] font-normal text-stone-400">{rows.length}</span></h2>
+        <div className="flex items-center gap-2">
+          <h2 className="text-[12.5px] font-semibold text-stone-800">{title} <span className="ml-0.5 text-[11px] font-normal text-stone-400">{rows.length}</span></h2>
+          {control && <span className="ml-auto">{control}</span>}
+        </div>
         <p className="mt-0.5 text-[11px] leading-snug text-stone-500">{blurb}</p>
       </div>
       {rows.length === 0
@@ -273,55 +271,7 @@ function ArticleBlock({ digest }: { digest: ArticleDigest }) {
   )
 }
 
-/** One week's streaming shortlist for K or D/ST. */
-function StreamTable({ pos, week, players, onPlan }: { pos: 'K' | 'DEF'; week: number; players: Streamer[]; onPlan?: (p: Player) => void }) {
-  if (!players.length) {
-    return (
-      <div className="rounded-md border border-stone-200 bg-white p-3 text-[12px] text-stone-500">
-        Week {week} — no lines posted yet, so there is nothing to rank on.
-      </div>
-    )
-  }
-  const basisLabel = pos === 'DEF' ? 'Opp implied' : 'Team implied'
-  return (
-    <div className="overflow-hidden rounded-md border border-stone-200 bg-white">
-      <div className="border-b border-stone-200 bg-stone-50 px-3 py-1.5 text-[11px] font-semibold text-stone-600">Week {week}</div>
-      <table className="w-full text-[12px]">
-        <thead>
-          <tr className="text-[10px] uppercase tracking-wide text-stone-400">
-            <th className="px-3 py-1 text-left font-medium">{pos === 'DEF' ? 'Defense' : 'Kicker'}</th>
-            <th className="px-2 py-1 text-left font-medium">Matchup</th>
-            <th className="px-2 py-1 text-right font-medium" title={pos === 'DEF' ? "Points the opponent is projected to score — lower is a better streaming spot" : "Points this kicker's own offense is projected to score — higher is better"}>{basisLabel}</th>
-            <th className="px-2 py-1 text-right font-medium">Own%</th>
-            <th className="w-8" />
-          </tr>
-        </thead>
-        <tbody>
-          {players.slice(0, 6).map((s, i) => (
-            <tr key={s.player_id} className={`border-t border-stone-100 ${i === 0 ? 'bg-emerald-50/60' : ''}`}>
-              <td className="px-3 py-1.5">
-                <span className="inline-flex items-center gap-1.5">
-                  {i === 0 && <span className="rounded bg-emerald-600 px-1 py-0.5 text-[9px] font-bold leading-none text-white">1</span>}
-                  <PlayerCell p={s} />
-                </span>
-              </td>
-              <td className="px-2 py-1.5 text-stone-600">{s.matchup ?? '—'}</td>
-              <td className="px-2 py-1.5 text-right tabular-nums">
-                <span className={s.stream_score >= 0.6 ? 'font-semibold text-emerald-700' : 'text-stone-700'}>{fmt(s.stream_basis, 1)}</span>
-              </td>
-              <td className="px-2 py-1.5 text-right text-stone-500">{pct(s.owned)}</td>
-              <td className="pr-2">
-                {onPlan && <button onClick={() => onPlan(s)} className="rounded border border-stone-300 px-1.5 py-0.5 text-[10px] text-stone-700 hover:border-amber-400 hover:bg-amber-50">+</button>}
-              </td>
-            </tr>
-          ))}
-        </tbody>
-      </table>
-    </div>
-  )
-}
-
-type Tab = 'targets' | 'stream' | 'browse'
+type Tab = 'targets' | 'browse'
 
 export default function Waivers() {
   const { leagueId, league, week, openPlan } = useApp()
@@ -339,6 +289,10 @@ export default function Waivers() {
   const [hideOut, setHideOut] = useState(false)
   const [relevantOnly, setRelevantOnly] = useState(true)
   const [fpOnly, setFpOnly] = useState(false)
+  // The points panel filters itself. Quarterbacks out-score everyone on raw points, so an
+  // unfiltered list is a list of quarterbacks; FLEX is the default because that is the pool you
+  // are usually shopping in. It overrides the page filter for this panel only.
+  const [ptsPos, setPtsPos] = useState('FLEX')
 
   // The week claims process into, and the week whose box score we are reading.
   const targetWeek = data?.week ?? week
@@ -374,11 +328,16 @@ export default function Waivers() {
     }
     return {
       fp: (data?.by_fantasypros ?? []).filter(keep),
-      points: (data?.by_points ?? []).filter(keep),
+      points: (data?.by_points ?? []).filter((t) => {
+        if (ptsPos === 'FLEX' ? !['RB', 'WR', 'TE'].includes(t.position) : ptsPos !== 'ALL' && t.position !== ptsPos) return false
+        if (hideOut && OUT_STATUSES.has(t.injury_status ?? '')) return false
+        if (q && !(t.name.toLowerCase().includes(q) || (t.team ?? '').toLowerCase() === q)) return false
+        return true
+      }),
       usage: (data?.by_usage ?? []).filter(keep),
       trending: (data?.by_trending ?? []).filter(keep),
     }
-  }, [data, pos, search, hideOut])
+  }, [data, pos, search, hideOut, ptsPos])
 
   const browseColumns = useMemo(() => playerColumns({
     week: targetWeek, rosEnd: data?.ros_end_week ?? 17, showRank: true, vsMine: true, espn: league?.platform === 'espn', fp: true, fpWaiver: true, usage: lastWeek,
@@ -415,11 +374,11 @@ export default function Waivers() {
 
       <div className="flex flex-wrap items-center gap-3">
         <div className="flex rounded-md border border-stone-200 bg-white p-0.5">
-          {([['targets', 'Claim targets'], ['stream', 'Streaming K/DST'], ['browse', 'Browse all']] as [Tab, string][]).map(([k, label]) => (
+          {([['targets', 'Claim targets'], ['browse', 'Browse all']] as [Tab, string][]).map(([k, label]) => (
             <button key={k} onClick={() => setTab(k)} className={`rounded px-3 py-1 text-[12px] ${tab === k ? 'bg-stone-900 text-white' : 'text-stone-700 hover:bg-stone-100'}`}>{label}</button>
           ))}
         </div>
-        {tab !== 'stream' && (
+        {(
           <>
             <div className="flex rounded-md border border-stone-200 bg-white p-0.5">
               {POS_FILTERS.map((f) => (
@@ -437,9 +396,7 @@ export default function Waivers() {
           </>
         )}
         <span className="ml-auto text-[12px] text-stone-500">
-          {tab === 'targets' ? `Week ${targetWeek} claims`
-            : tab === 'browse' ? `${rows.length} of ${data?.players.length ?? 0} free agents`
-              : `Weeks ${data?.stream_weeks?.join(', ') ?? targetWeek}`}
+          {tab === 'targets' ? `Week ${targetWeek} claims` : `${rows.length} of ${data?.players.length ?? 0} free agents`}
         </span>
       </div>
 
@@ -456,12 +413,21 @@ export default function Waivers() {
             />
             <Panel
               title={`Week ${lastWeek} points`} sortKey="last_week_pts" rows={panels.points} columns={ptsCols}
-              blurb={`What they actually scored, in this league's scoring. Quarterbacks top this on raw points — filter by position to read it within a spot.`}
-              empty={`Nobody available scored in week ${lastWeek}.`}
+              blurb={`What they actually scored, in this league's scoring. Quarterbacks out-score every other position on raw points, so this panel filters itself.`}
+              empty={`Nobody available scored in week ${lastWeek}${ptsPos === 'ALL' ? '' : ` at ${ptsPos}`}.`}
+              control={
+                <select
+                  value={ptsPos} onChange={(e) => setPtsPos(e.target.value)}
+                  title="Position shown in this panel only"
+                  className="rounded border border-stone-200 bg-white px-1.5 py-0.5 text-[11px] text-stone-700"
+                >
+                  {POS_FILTERS.map((f) => <option key={f} value={f}>{f}</option>)}
+                </select>
+              }
             />
             <Panel
-              title="Snap share and volume" sortKey="usage_score" rows={panels.usage} columns={useCols}
-              blurb={`Week ${lastWeek} usage — targets for receivers and tight ends, carries for backs, ranked within position. Leads scoring, so it catches a role change early. No quarterbacks.`}
+              title="Snap share and volume" sortKey="lw_snap_pct" rows={panels.usage} columns={useCols}
+              blurb={`Ranked on week ${lastWeek} snap share first, then volume — targets for receivers and tight ends, carries for backs. Snaps say whether he is on the field at all; volume says whether they are using him. No quarterbacks.`}
               empty="No usage recorded for available players last week."
             />
             {data.movement && data.by_trending && (
@@ -473,25 +439,6 @@ export default function Waivers() {
             )}
           </div>
           {data.articles && <ArticleBlock digest={data.articles} />}
-        </div>
-      )}
-
-      {data && tab === 'stream' && (
-        <div className="space-y-4">
-          <p className="text-[12px] text-stone-500">
-            K and D/ST are matchup plays, so these rank on Vegas implied totals rather than season value — a defense against an offense projected to score little, a kicker on an offense projected to score a lot.
-            Looking ahead {data.stream_weeks.length} weeks lets you claim a good matchup before someone else does.
-          </p>
-          {(['DEF', 'K'] as const).map((p) => (
-            <div key={p} className="space-y-2">
-              <h2 className="text-[13px] font-semibold text-stone-800">{p === 'DEF' ? 'Defense / Special teams' : 'Kickers'}</h2>
-              <div className="grid gap-3 lg:grid-cols-3">
-                {(data.streamers[p] ?? []).map((w) => (
-                  <StreamTable key={w.week} pos={p} week={w.week} players={w.players} onPlan={onPlan} />
-                ))}
-              </div>
-            </div>
-          ))}
         </div>
       )}
 

@@ -3,6 +3,7 @@ import { Layout } from './components/Layout'
 import Waivers from './pages/Waivers'
 import Games from './pages/Games'
 import Roster from './pages/Roster'
+import Streaming from './pages/Streaming'
 import League from './pages/League'
 import Planner from './pages/Planner'
 
@@ -14,6 +15,7 @@ export default function App() {
         <Route path="/waivers" element={<Waivers />} />
         <Route path="/games" element={<Games />} />
         <Route path="/roster" element={<Roster />} />
+        <Route path="/streaming" element={<Streaming />} />
         <Route path="/league" element={<League />} />
         <Route path="/planner" element={<Planner />} />
       </Route>
