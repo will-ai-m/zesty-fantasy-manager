@@ -145,7 +145,7 @@ export interface ArticleItem {
   name: string
   position: string | null
   team: string | null
-  action: 'add' | 'buy' | 'sell' | 'hold'
+  action: 'add' | 'stash' | 'buy' | 'sell' | 'hold'
   faab: string | null
   priority: string | null
   note: string | null
@@ -154,7 +154,11 @@ export interface ArticleItem {
 
 export interface ArticleSource { id: string; name: string; url: string; partial?: boolean; partial_note?: string }
 
-export interface ArticleDigest { week: number; sources: ArticleSource[]; items: ArticleItem[] }
+/** A name-only group from a column — handcuff tiers, drop lists. No per-player reasoning, so
+ * these render as compact lines rather than as bullets alongside the reasoned picks. */
+export interface ArticleList { label: string; action: 'stash' | 'drop'; names: string[]; sources: string[] }
+
+export interface ArticleDigest { week: number; sources: ArticleSource[]; items: ArticleItem[]; lists: ArticleList[] }
 
 /** A free agent in one of the three ranked panels. `usage_score` is only set in the usage
  * panel, where it is the blend of snap-share and volume rank that orders it. */

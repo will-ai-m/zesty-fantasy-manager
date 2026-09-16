@@ -275,12 +275,18 @@ function PendingStrip({ claims, usesFaab }: { claims: PendingClaim[]; usesFaab: 
  * table is numbers, this is somebody's opinion, and mixing the two makes it unclear which is
  * which. Sell/hold calls are commentary rather than claims, so they sit in their own group. */
 function ArticleBlock({ digest }: { digest: ArticleDigest }) {
-  const adds = digest.items.filter((i) => i.action === 'add' || i.action === 'buy')
-  const other = digest.items.filter((i) => i.action === 'sell' || i.action === 'hold')
+  // Two columns covering ~40 players is a wall of bullets if left flat, so it reads in the same
+  // order you would work the wire: the reasoned adds by position, then the speculative stashes,
+  // then the buy/sell commentary, then the name-only tiers and drop lists at the bottom.
+  const POS = ['RB', 'WR', 'TE', 'QB', 'DEF', 'K']
+  const adds = digest.items.filter((i) => i.action === 'add')
+  const addGroups = POS.map((p) => [p, adds.filter((i) => i.position === p)] as const).filter(([, v]) => v.length)
+  const stashes = digest.items.filter((i) => i.action === 'stash')
+  const calls = digest.items.filter((i) => i.action === 'buy' || i.action === 'sell' || i.action === 'hold')
 
   const Item = ({ i }: { i: ArticleItem }) => (
     <li className="flex gap-2 leading-snug">
-      <span className={`mt-[7px] h-1 w-1 shrink-0 rounded-full ${i.action === 'sell' ? 'bg-red-400' : 'bg-amber-500'}`} />
+      <span className={`mt-[7px] h-1 w-1 shrink-0 rounded-full ${i.action === 'sell' ? 'bg-red-400' : i.action === 'stash' ? 'bg-stone-300' : 'bg-amber-500'}`} />
       <span>
         <span className="font-semibold text-stone-800">{i.name}</span>
         <span className="ml-1 text-[11px] text-stone-500">{i.position}{i.team ? ` · ${i.team}` : ''}</span>
@@ -295,9 +301,18 @@ function ArticleBlock({ digest }: { digest: ArticleDigest }) {
     </li>
   )
 
+  const Section = ({ label, hint, children }: { label: string; hint?: string; children: React.ReactNode }) => (
+    <div className="border-t border-amber-200 pt-2.5 first:border-t-0 first:pt-0">
+      <h3 className="mb-1.5 text-[10px] font-bold uppercase tracking-wide text-amber-800/70">
+        {label}{hint && <span className="ml-1 font-medium normal-case tracking-normal text-stone-400">{hint}</span>}
+      </h3>
+      {children}
+    </div>
+  )
+
   return (
     <aside className="w-full shrink-0 self-start rounded-md border border-amber-200 bg-amber-50/50 lg:sticky lg:top-3 lg:max-h-[calc(100vh-2rem)] lg:w-80 lg:overflow-y-auto xl:w-96">
-      <div className="border-b border-amber-200 px-3 py-2">
+      <div className="sticky top-0 z-10 border-b border-amber-200 bg-amber-50 px-3 py-2">
         <h2 className="text-[13px] font-semibold text-stone-800">What the columns say</h2>
         <p className="mt-0.5 text-[11px] text-stone-500">
           Week {digest.week} · {digest.sources.map((src, n) => (
@@ -306,9 +321,32 @@ function ArticleBlock({ digest }: { digest: ArticleDigest }) {
         </p>
       </div>
       <div className="space-y-3 px-3 py-2.5">
-        <ul className="space-y-2 text-[12px]">{adds.map((i) => <Item key={i.name} i={i} />)}</ul>
-        {other.length > 0 && (
-          <ul className="space-y-2 border-t border-amber-200 pt-2.5 text-[12px]">{other.map((i) => <Item key={i.name} i={i} />)}</ul>
+        {addGroups.map(([pos, group]) => (
+          <Section key={pos} label={pos === 'DEF' ? 'D/ST' : pos}>
+            <ul className="space-y-2 text-[12px]">{group.map((i) => <Item key={i.name} i={i} />)}</ul>
+          </Section>
+        ))}
+        {stashes.length > 0 && (
+          <Section label="Deep stashes" hint="under 5% rostered">
+            <ul className="space-y-2 text-[12px]">{stashes.map((i) => <Item key={i.name} i={i} />)}</ul>
+          </Section>
+        )}
+        {calls.length > 0 && (
+          <Section label="Buy / sell">
+            <ul className="space-y-2 text-[12px]">{calls.map((i) => <Item key={i.name} i={i} />)}</ul>
+          </Section>
+        )}
+        {digest.lists.length > 0 && (
+          <Section label="Named without comment" hint="no reasoning given">
+            <div className="space-y-1.5 text-[11px]">
+              {digest.lists.map((l) => (
+                <p key={l.label} className="leading-snug">
+                  <span className={`font-semibold ${l.action === 'drop' ? 'text-red-800' : 'text-stone-700'}`}>{l.label}</span>
+                  <span className="text-stone-500"> — {l.names.join(', ')}</span>
+                </p>
+              ))}
+            </div>
+          </Section>
         )}
         <p className="border-t border-amber-200 pt-2 text-[11px] text-stone-500">Opinion — not part of the ranking, which is numbers only.</p>
       </div>

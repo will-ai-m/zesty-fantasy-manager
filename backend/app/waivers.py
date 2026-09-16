@@ -130,10 +130,19 @@ def article_digest(data: dict | None, season: str, week: int) -> dict | None:
         "note": p.get("note"),
         "sources": [names.get(x, x) for x in p.get("sources", [])],
     } for p in data.get("players", [])]
-    # Adds first, then the buy-low/sell/hold calls, which are commentary rather than claims.
-    order = {"add": 0, "buy": 1, "hold": 2, "sell": 3}
+    # Adds first, then the speculative stashes, then the buy-low/sell/hold calls, which are
+    # commentary rather than claims.
+    order = {"add": 0, "stash": 1, "buy": 2, "hold": 3, "sell": 4}
     items.sort(key=lambda i: (order.get(i["action"], 9), i["priority"] == "low"))
-    return {"week": week, "sources": data.get("sources", []), "items": items}
+    # Name-only groups — handcuff tiers, drop lists. They carry no reasoning per player, so
+    # they stay out of `items`, where every row is a claim with a note behind it.
+    lists = [{
+        "label": g.get("label"),
+        "action": g.get("action", "stash"),
+        "names": g.get("names", []),
+        "sources": [names.get(x, x) for x in g.get("sources", [])],
+    } for g in data.get("lists", []) if g.get("names")]
+    return {"week": week, "sources": data.get("sources", []), "items": items, "lists": lists}
 
 
 # --------------------------------------------------------------------------- streaming
