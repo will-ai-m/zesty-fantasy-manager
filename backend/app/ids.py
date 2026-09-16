@@ -93,12 +93,24 @@ class Crosswalk:
                 return cands[0]
         return None
 
+    def by_name_any(self, name: str) -> list[str]:
+        """Every player with this name, whatever their position. For callers that know the name
+        but not the position — a waiver claim reads "Bid $10 for Kaelon Black" and nothing else."""
+        key = normalize_name(name)
+        return [pid for (n, _pos), pids in self.by_name.items() if n == key for pid in pids]
+
     def from_yahoo(self, yahoo_id: int, name: str | None, position: str | None) -> str | None:
         pid = self.yahoo.get(yahoo_id)
         if pid:
             return pid
         if name and position:
             cands = self.by_name.get((normalize_name(name), position), [])
+            if len(cands) == 1:
+                return cands[0]
+        if name and not position:
+            # Rookies often have no yahoo_id in either source yet, so the name is all there is.
+            # Only accept it when it is unambiguous league-wide.
+            cands = self.by_name_any(name)
             if len(cands) == 1:
                 return cands[0]
         return None

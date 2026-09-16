@@ -170,6 +170,17 @@ export interface Target extends Player {
 }
 
 /** Which movement signal this platform publishes, and how to label it. */
+/** A waiver claim you have submitted that has not processed yet. Always your own — every
+ * platform keeps claims private until they run. */
+export interface PendingClaim {
+  player_id: string | null
+  name: string | null
+  bid: number | null
+  priority: number | null
+  runs_on: string | null
+  drop_player_id: string | null
+}
+
 export interface Movement { kind: 'sleeper' | 'espn' | 'yahoo'; label: string; blurb: string }
 
 /** A K or D/ST ranked for one specific week on Vegas implied totals. */
@@ -198,6 +209,7 @@ export interface WaiversResponse {
    * are a different population than the one these counts describe. */
   by_trending: Target[] | null
   movement: Movement | null
+  pending: PendingClaim[]
   streamers: { DEF: StreamWeek[]; K: StreamWeek[] }
   stream_weeks: number[]
   articles: ArticleDigest | null

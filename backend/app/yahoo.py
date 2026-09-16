@@ -295,6 +295,41 @@ def parse_pool_page(soup: BeautifulSoup) -> list[dict]:
     return out
 
 
+_CLAIM = re.compile(r"Waiver\s+(\d+)\s*\(([^)]*)\)\s*:\s*Bid\s*\$?([\d.]+)\s*for\s+(.+?)\s*$", re.S)
+
+
+def parse_pending(soup: BeautifulSoup) -> list[dict]:
+    """The team page's "Pending Transactions" panel -> [{yahoo_id, name, bid, priority, runs_on}].
+
+    These are waiver claims you have submitted that have not processed yet. Yahoo shows them only
+    on your own team page, and only your own — a claim is private until it runs — so this is "what
+    I already have in", not a league-wide view. The player id comes out of the claim link
+    (`viewwaiver?claim_id=<team>_<player>_<n>`), which is more reliable than the display name.
+    """
+    box = soup.find(id="pending_transactions")
+    if box is None:
+        return []
+    out: list[dict] = []
+    for a in box.find_all("a", href=True):
+        if "viewwaiver" not in a["href"]:
+            continue
+        text = re.sub(r"\s+", " ", a.get_text(" ", strip=True))
+        text = text.replace("View Details", "").strip()
+        m = _CLAIM.search(text)
+        if not m:
+            continue
+        parts = re.search(r"claim_id=\d+_(\d+)_", a["href"])
+        out.append({
+            "yahoo_id": parts.group(1) if parts else None,
+            "priority": int(m.group(1)),
+            "runs_on": m.group(2).strip() or None,
+            "bid": _num(m.group(3)),
+            # Yahoo appends a private-use chevron glyph to the link text; strip it off the name.
+            "name": re.sub(r"[\ue000-\uf8ff]", "", m.group(4)).strip(),
+        })
+    return out
+
+
 def parse_buzz(soup: BeautifulSoup) -> list[dict]:
     """Transaction Trends (`/buzzindex`) -> [{yahoo_id, name, adds, drops, trades, owned, started}].
 
@@ -415,6 +450,13 @@ class Yahoo:
             return {"league_id": league_id, "name": home.get("league_name"), "settings": settings,
                     "my_team_id": home["my_team_id"], "teams": teams}
         return await self.cache.get(f"yahoo:league:{league_id}", 1 * MIN, loader)
+
+    async def pending(self, league_id: str, team_id: str) -> list[dict]:
+        """Your own in-flight waiver claims, from your team page."""
+        async def loader():
+            html = await self._get(f"/{league_id}/{team_id}")
+            return parse_pending(_soup(html))
+        return await self.cache.get(f"yahoo:pending:{league_id}:{team_id}", 2 * MIN, loader)
 
     async def buzz(self, league_id: str) -> list[dict]:
         """Transaction Trends: Yahoo's own add/drop counts, for players still available here."""
@@ -564,6 +606,19 @@ def normalize_pool(rows: list[dict], xw: Crosswalk) -> tuple[dict[str, dict], di
             "rank_preseason": row.get("rank_preseason"), "rank_actual": row.get("rank_actual"),
         }
     return info, synthetic
+
+
+def normalize_pending(rows: list[dict], xw: Crosswalk) -> list[dict]:
+    """Pending-claim rows -> the service's shape, with canonical player ids."""
+    out = []
+    for r in rows:
+        yid = r.get("yahoo_id")
+        pid = xw.from_yahoo(int(yid), r.get("name"), None) if yid and str(yid).isdigit() else None
+        out.append({
+            "player_id": pid, "name": r.get("name"), "bid": r.get("bid"),
+            "priority": r.get("priority"), "runs_on": r.get("runs_on"), "drop_player_id": None,
+        })
+    return out
 
 
 def normalize_buzz(rows: list[dict], xw: Crosswalk) -> dict[str, dict]:

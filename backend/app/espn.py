@@ -118,6 +118,14 @@ class Espn:
             return d.get("players", [])
         return await self.cache.get(key, 10 * MIN, loader)
 
+    async def pending(self, league_id: str, season: str) -> list[dict]:
+        """Waiver claims submitted but not yet processed. ESPN returns only the ones visible to
+        the account whose cookies we hold, which in practice means your own."""
+        async def loader():
+            d = await self._get(f"/seasons/{season}/segments/0/leagues/{league_id}", ["mPendingTransactions"])
+            return d.get("pendingTransactions") or []
+        return await self.cache.get(f"espn:pending:{league_id}:{season}", 2 * MIN, loader)
+
     async def movers(self, league_id: str, season: str, stat_ids: list[str], limit: int = 25) -> list[dict]:
         """The players ESPN's managers are actually picking up and cutting.
 

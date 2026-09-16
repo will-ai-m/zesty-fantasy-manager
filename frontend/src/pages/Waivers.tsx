@@ -1,6 +1,6 @@
 import { useMemo, useState, type ReactNode } from 'react'
 import { useQuery } from '@tanstack/react-query'
-import { api, type ArticleDigest, type ArticleItem, type Movement, type Player, type Streamer, type Target } from '../api'
+import { api, type ArticleDigest, type ArticleItem, type Movement, type PendingClaim, type Player, type Streamer, type Target } from '../api'
 import { fmt, fmtInt, gameDayRowClass, OUT_STATUSES, pct, POS_ORDER, shortDate } from '../lib/format'
 import { useApp } from '../components/AppContext'
 import { Chip, ErrorBox, LeagueBar, PlatformBadge, PlayerCell, Pos, Spinner } from '../components/Badges'
@@ -137,9 +137,26 @@ export function playerColumns(opts: { week: number; rosEnd: number; onPlan?: (p:
 /** Each panel answers one question, so it carries only the columns that answer it. Everything a
  * player is doing elsewhere is a click away in the drawer; repeating all of it in all four panels
  * is what made the page a scroll. Identity (name, position, opponent) is the only shared spine. */
-function panelColumns(kind: 'fp' | 'points' | 'usage' | 'move', opts: { week: number; lastWeek: number; move?: Movement['kind']; onPlan?: (p: Player) => void }): Column<Target>[] {
+function panelColumns(kind: 'fp' | 'points' | 'usage' | 'move', opts: { week: number; lastWeek: number; move?: Movement['kind']; claimed?: Map<string, number | null>; onPlan?: (p: Player) => void }): Column<Target>[] {
   const identity: Column<Target>[] = [
-    { key: 'name', header: 'Player', render: (t) => <PlayerCell p={t} />, sort: (t) => t.name },
+    {
+      key: 'name', header: 'Player',
+      render: (t) => {
+        const bid = opts.claimed?.get(t.player_id)
+        return (
+          <span className="inline-flex items-center gap-1.5">
+            <PlayerCell p={t} />
+            {bid !== undefined && (
+              <span
+                title={`You already have a waiver claim in on this player${bid != null ? ` for $${bid}` : ''}`}
+                className="rounded bg-sky-200 px-1 py-0.5 text-[9.5px] font-bold leading-none text-sky-900"
+              >{bid != null ? `BID $${bid}` : 'CLAIMED'}</span>
+            )}
+          </span>
+        )
+      },
+      sort: (t) => t.name,
+    },
     { key: 'pos', header: 'Pos', render: (t) => <Pos pos={t.position} />, sort: (t) => POS_ORDER.indexOf(t.position), align: 'center' },
     { key: 'opp', header: `Wk ${opts.week}`, title: 'Opponent the week you are claiming into', render: (t) => <span className={t.on_bye ? 'text-stone-400' : ''}>{t.on_bye ? 'BYE' : t.opponent ?? '—'}</span>, sort: (t) => t.opponent },
   ]
@@ -222,6 +239,34 @@ function Panel({ title, blurb, rows, columns, sortKey, empty, control }: {
             <DataTable rows={rows} columns={columns} rowKey={(t) => t.player_id} initialSort={{ key: sortKey, dir: sortKey === 'fp_waiver' ? 'asc' : 'desc' }} rowClass={gameDayRowClass} />
           </div>
         )}
+    </section>
+  )
+}
+
+/** Claims you have already submitted, which is the first thing worth knowing on this page —
+ * it stops you bidding twice on the same player and shows what the budget is already committed
+ * to. Every platform keeps claims private until they run, so this is only ever your own. */
+function PendingStrip({ claims, usesFaab }: { claims: PendingClaim[]; usesFaab: boolean }) {
+  const total = claims.reduce((sum, c) => sum + (c.bid ?? 0), 0)
+  return (
+    <section className="rounded-md border border-sky-200 bg-sky-50/60 px-3 py-2">
+      <div className="flex flex-wrap items-baseline gap-x-3 gap-y-1">
+        <h2 className="text-[12.5px] font-semibold text-stone-800">
+          Your pending claims <span className="ml-0.5 text-[11px] font-normal text-stone-400">{claims.length}</span>
+        </h2>
+        {claims[0]?.runs_on && <span className="text-[11px] text-stone-500">runs {claims[0].runs_on}</span>}
+        {usesFaab && total > 0 && <span className="text-[11px] text-stone-500">${total} committed</span>}
+        <span className="ml-auto text-[11px] text-stone-400">already submitted — not a recommendation</span>
+      </div>
+      <ul className="mt-1.5 flex flex-wrap gap-x-4 gap-y-1 text-[12px]">
+        {claims.map((c, i) => (
+          <li key={`${c.player_id ?? c.name}-${i}`} className="flex items-baseline gap-1.5">
+            {c.priority != null && <span className="rounded bg-sky-200 px-1 py-0.5 text-[9.5px] font-bold leading-none text-sky-900">{c.priority}</span>}
+            <span className="font-medium text-stone-800">{c.name}</span>
+            {c.bid != null && <span className="font-semibold text-emerald-800">${c.bid}</span>}
+          </li>
+        ))}
+      </ul>
     </section>
   )
 }
@@ -344,9 +389,14 @@ export default function Waivers() {
     onPlan: (p) => leagueId && openPlan({ leagueId, add: p }),
   }), [targetWeek, lastWeek, data?.ros_end_week, leagueId, openPlan, league?.platform])
 
+  const claimed = useMemo(() => {
+    const m = new Map<string, number | null>()
+    for (const c of data?.pending ?? []) if (c.player_id) m.set(c.player_id, c.bid)
+    return m
+  }, [data?.pending])
   const colOpts = useMemo(() => ({
-    week: targetWeek, lastWeek, onPlan: (p: Player) => leagueId && openPlan({ leagueId, add: p }),
-  }), [targetWeek, lastWeek, leagueId, openPlan])
+    week: targetWeek, lastWeek, claimed, onPlan: (p: Player) => leagueId && openPlan({ leagueId, add: p }),
+  }), [targetWeek, lastWeek, claimed, leagueId, openPlan])
   const fpCols = useMemo(() => panelColumns('fp', colOpts), [colOpts])
   const ptsCols = useMemo(() => panelColumns('points', colOpts), [colOpts])
   const useCols = useMemo(() => panelColumns('usage', colOpts), [colOpts])
@@ -405,7 +455,9 @@ export default function Waivers() {
 
       {data && tab === 'targets' && (
         <div className="flex flex-col gap-3 lg:flex-row lg:items-start">
-          <div className="grid min-w-0 flex-1 gap-3 xl:grid-cols-2">
+          <div className="min-w-0 flex-1 space-y-3">
+            {data.pending.length > 0 && <PendingStrip claims={data.pending} usesFaab={(league.waiver?.budget ?? 0) > 0} />}
+            <div className="grid gap-3 xl:grid-cols-2">
             <Panel
               title="FantasyPros waiver list" sortKey="fp_waiver" rows={panels.fp} columns={fpCols}
               blurb={`Their week ${targetWeek} shortlist, in their order — 10 experts, and the only forward-looking read here.`}
@@ -437,6 +489,7 @@ export default function Waivers() {
                 empty="Nothing is moving in this league's pool."
               />
             )}
+            </div>
           </div>
           {data.articles && <ArticleBlock digest={data.articles} />}
         </div>

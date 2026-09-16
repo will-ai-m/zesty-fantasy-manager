@@ -14,7 +14,8 @@ from . import fantasypros as fp
 from .espn import Espn, normalize_league as espn_normalize_league, normalize_pool as espn_normalize_pool, \
     normalize_transactions as espn_normalize_transactions, stat_id as espn_stat_id
 from .yahoo import Yahoo, normalize_league as yahoo_normalize_league, normalize_pool as yahoo_normalize_pool, \
-    normalize_buzz as yahoo_normalize_buzz, normalize_transactions as yahoo_normalize_transactions
+    normalize_buzz as yahoo_normalize_buzz, normalize_pending as yahoo_normalize_pending, \
+    normalize_transactions as yahoo_normalize_transactions
 from .ids import Crosswalk, load_nflverse_ids
 from .lineup import optimal_lineup, starting_slots
 from .scoring import score
@@ -704,6 +705,61 @@ class Service:
         out.sort(key=lambda r: -(r.get("adds") or 0))
         return out
 
+    async def _pending_claims(self, b: dict, week: int) -> list[dict]:
+        """Waiver claims you have submitted that have not run yet.
+
+        Every platform treats these as private to the manager who made them, so this is always
+        "mine", never the league's. Worth surfacing next to the pool: the thing you most want to
+        know while reading a waiver page is what you have already bid on, and for how much.
+        """
+        lg = b["league"]
+        platform, raw_id = lg.get("platform", "sleeper"), lg["platform_league_id"]
+        mine = b.get("my_roster") or {}
+        players = await self.s.players()
+
+        def name_of(pid: str | None) -> str | None:
+            p = players.get(pid) if pid else None
+            return (p or {}).get("full_name") or (b.get("synthetic", {}).get(pid) or {}).get("full_name") or pid
+
+        try:
+            if platform == "yahoo" and self.yahoo:
+                xw = await self._crosswalk()
+                rows = await self.yahoo.pending(raw_id, str(mine.get("roster_id") or ""))
+                return yahoo_normalize_pending(rows, xw)
+            if platform == "espn" and self.espn:
+                raw, xw = await asyncio.gather(
+                    self.espn.pending(raw_id, str(lg["season"])), self._crosswalk())
+                resolver = {**{eid: pid for eid, pid in xw.espn.items()},
+                            **{v: k for k, v in b.get("espn_ids", {}).items()}}
+                out = []
+                for t in espn_normalize_transactions(raw, resolver):
+                    if mine and t["roster_ids"] and mine["roster_id"] not in t["roster_ids"]:
+                        continue
+                    for pid in t["adds"]:
+                        out.append({"player_id": pid, "name": name_of(pid),
+                                    "bid": (t.get("settings") or {}).get("waiver_bid"),
+                                    "priority": None, "runs_on": None,
+                                    "drop_player_id": next(iter(t["drops"]), None)})
+                return out
+            if platform == "sleeper":
+                txs = await self.s.transactions(raw_id, week)
+                out = []
+                for t in txs:
+                    if t.get("status") != "pending":
+                        continue
+                    if mine and mine["roster_id"] not in (t.get("roster_ids") or []):
+                        continue
+                    for pid in (t.get("adds") or {}):
+                        out.append({"player_id": pid, "name": name_of(pid),
+                                    "bid": (t.get("settings") or {}).get("waiver_bid"),
+                                    "priority": None, "runs_on": None,
+                                    "drop_player_id": next(iter(t.get("drops") or {}), None)})
+                return out
+        except Exception:
+            # A pending-claims lookup failing should never take the waiver page with it.
+            return []
+        return []
+
     async def _team_odds(self, season: str, week: int) -> dict[str, dict]:
         """team -> {implied, opp_implied, label} for one week. Empty when the book hasn't
         priced that week yet, which is normal for games two or three weeks out."""
@@ -801,6 +857,7 @@ class Service:
         odds_by_week = dict(zip(odds_weeks, await asyncio.gather(*(self._team_odds(season, w) for w in odds_weeks))))
         # FantasyPros ranks K and D/ST one week at a time, so its ranks are attached only to the
         # week it actually covers; the later weeks show the line alone.
+        pending = await self._pending_claims(b, week)
         fp_data, _ = self._fp()
         fp_week = ((fp_data or {}).get("sets", {}).get("weekly") or {}).get("week")
         streamers: dict[str, list[dict]] = {}
@@ -822,6 +879,7 @@ class Service:
             "movement": movement,
             "streamers": streamers,
             "stream_weeks": odds_weeks,
+            "pending": pending,
             "articles": self._articles(season, week),
             "players": free,
         }
