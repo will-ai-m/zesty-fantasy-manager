@@ -87,17 +87,41 @@ function basis(s: Streamer, pos: Pos, i: number): number | null {
   if (!g?.matchup) return null
   return pos === 'DEF' ? g.opp_implied : g.implied
 }
-const beats = (pos: Pos, a: number, b: number) => (pos === 'DEF' ? a < b : a > b)
+/** What orders the page: one week's Vegas number (the default), or FantasyPros' rank — for the
+ * one week its K and D/ST pages cover, or for the rest of the season. */
+type Order = 'week' | 'fp' | 'ros'
 
-/** Rows ordered by one week's number, best first, byes and unpriced games last. The server orders
- * by the first week; re-sorting here lets you plan a later week — on a Monday the first week is
- * already played. Stable, so ties keep the server's order. */
-function sortBy(rows: Streamer[], pos: Pos, i: number): Streamer[] {
+/** A unit's standing under the chosen order as a number where lower is better, so every
+ * comparison on the page is one `<`. Null when it has none: a bye, an unpriced game, or a unit
+ * FantasyPros did not rank. */
+function score(s: Streamer, pos: Pos, order: Order, at: number): number | null {
+  if (order === 'fp') return s.fp_rank
+  if (order === 'ros') return s.fp_ros_rank
+  const v = basis(s, pos, at)
+  return v == null ? null : pos === 'DEF' ? v : -v
+}
+
+/** Rows best first under the chosen order, with nothing to rank on last. The server orders by the
+ * first week's line; re-sorting here lets you plan a later week — on a Monday the first week is
+ * already played — or read the table the way the experts rank it. Stable, so ties keep the
+ * server's order. */
+function sortBy(rows: Streamer[], pos: Pos, order: Order, at: number): Streamer[] {
   return [...rows].sort((a, b) => {
-    const x = basis(a, pos, i), y = basis(b, pos, i)
+    const x = score(a, pos, order, at), y = score(b, pos, order, at)
     if (x == null || y == null) return x == null ? (y == null ? 0 : 1) : -1
-    return pos === 'DEF' ? x - y : y - x
+    return x - y
   })
+}
+
+/** The best open unit in a league under the order, and how it compares with the best of yours:
+ * `gain` is positive when it beats everything you have, in implied points or in rank places. */
+function bestOpen(rows: Streamer[], leagueId: string, pos: Pos, order: Order, at: number) {
+  const best = rows.find((s) => open(s.leagues[leagueId]) && score(s, pos, order, at) != null) ?? null
+  if (!best) return null
+  const mine = mineIn(rows, leagueId).map((s) => score(s, pos, order, at)).filter((v): v is number => v != null)
+  const bar = mine.length ? Math.min(...mine) : null
+  const v = score(best, pos, order, at)!
+  return { best, gain: bar == null ? null : bar - v, up: bar == null || v < bar }
 }
 
 const open = (st: Standing | undefined) => st?.status === 'free' || st?.status === 'waivers'
@@ -194,8 +218,8 @@ function StandingCell({ s, st, lg, pos, week, picked, onPick }: {
 }
 
 /** What you have at this position in every league, with the best thing still open there. */
-function Yours({ pos, rows, leagues, weeks, at, pickOf, onPick }: {
-  pos: Pos; rows: Streamer[]; leagues: StreamingLeague[]; weeks: number[]; at: number; pickOf: PickOf; onPick: OnPick
+function Yours({ pos, rows, leagues, weeks, at, order, pickOf, onPick }: {
+  pos: Pos; rows: Streamer[]; leagues: StreamingLeague[]; weeks: number[]; at: number; order: Order; pickOf: PickOf; onPick: OnPick
 }) {
   const label = pos === 'K' ? 'kicker' : 'D/ST'
   return (
@@ -206,8 +230,8 @@ function Yours({ pos, rows, leagues, weeks, at, pickOf, onPick }: {
             <th className={`${th} text-left`}>League</th>
             <th className={`${th} text-left`}>Yours</th>
             {weeks.map((w, i) => <th key={w} className={`${th} text-center ${i === 0 ? 'border-l border-stone-100' : ''} ${i === at ? 'text-stone-700' : ''}`}>Wk {w}</th>)}
-            <th className={`${th} border-l border-stone-100 text-left`} title="The best unit still open in this league for the week you are sorting by, and how far it beats (▲) or trails (▼) the best of yours that week">
-              Best open · Wk {weeks[at]}
+            <th className={`${th} border-l border-stone-100 text-left`} title="The best unit still open in this league by whatever the tables are ordered on, and how far it beats (▲) or trails (▼) the best of yours by the same measure">
+              Best open · {order === 'fp' ? `FantasyPros wk ${weeks[0]}` : order === 'ros' ? 'FantasyPros ROS' : `Wk ${weeks[at]}`}
             </th>
           </tr>
         </thead>
@@ -223,16 +247,18 @@ function Yours({ pos, rows, leagues, weeks, at, pickOf, onPick }: {
               )
             }
             const mine = mineIn(rows, lg.league_id)
-            const best = rows.find((s) => open(s.leagues[lg.league_id]) && basis(s, pos, at) != null)
-            const vals = mine.map((s) => basis(s, pos, at)).filter((v): v is number => v != null)
-            const bar = vals.length ? vals.reduce((a, b) => (beats(pos, a, b) ? a : b)) : null
-            const bv = best ? basis(best, pos, at)! : null
-            const up = bv != null && (bar == null || beats(pos, bv, bar))
-            const delta = bv != null && bar != null ? Math.abs(bv - bar) : null
+            const found = bestOpen(rows, lg.league_id, pos, order, at)
+            const best = found?.best ?? null
+            const up = !!found?.up
+            const delta = found?.gain != null ? Math.abs(found.gain) : null
+            // FantasyPros' weekly rank is for the first week only, so that is the matchup to show.
+            const wi = order === 'fp' ? 0 : at
+            const bv = best ? basis(best, pos, wi) : null
+            const unit = order === 'week' ? 'implied points' : `place${delta === 1 ? '' : 's'} in the FantasyPros ${order === 'ros' ? 'rest-of-season' : 'weekly'} rank`
             const bestSt = best?.leagues[lg.league_id]
             const bestCell = (
               <td className="border-l border-stone-100 py-1.5 pl-2 pr-3 align-top" rowSpan={Math.max(1, mine.length)}>
-                {!best ? <span className="text-[11px] text-stone-400">Nothing open with a game</span> : (
+                {!best ? <span className="text-[11px] text-stone-400">{order === 'week' ? 'Nothing open with a game' : 'Nothing open that FantasyPros ranks'}</span> : (
                   <span className={`flex items-center gap-2 ${up ? '' : 'opacity-60'}`}>
                     {pickOf(lg.league_id, pos, weeks[at]) === best.player_id
                       ? <button onClick={() => onPick(lg.league_id, best)} title={`Your week ${weeks[at]} pick here — click to clear it`}
@@ -240,11 +266,12 @@ function Yours({ pos, rows, leagues, weeks, at, pickOf, onPick }: {
                       : <button onClick={() => onPick(lg.league_id, best)} title={`Make this your week ${weeks[at]} pick in ${lg.name}`}
                                 className="rounded border border-stone-300 px-1.5 py-0.5 text-[10px] text-stone-700 hover:border-amber-400 hover:bg-amber-50">Pick</button>}
                     <PlayerCell p={best} />
-                    <span className="text-[11px] text-stone-500">{best.weeks[at]?.matchup}</span>
-                    <span className={`rounded px-1 py-0.5 text-[11px] tabular-nums ${pos === 'DEF' && band(bv) ? `${BAND[band(bv)!].cell} ${BAND[band(bv)!].num}` : 'text-stone-700'}`}>{fmt(bv, 1)}</span>
+                    <span className="text-[11px] text-stone-500">{best.weeks[wi]?.matchup ?? 'bye'}</span>
+                    {bv != null && <span className={`rounded px-1 py-0.5 text-[11px] tabular-nums ${pos === 'DEF' && band(bv) ? `${BAND[band(bv)!].cell} ${BAND[band(bv)!].num}` : 'text-stone-700'}`}>{fmt(bv, 1)}</span>}
+                    {order !== 'week' && <span className="text-[11px] font-semibold tabular-nums text-violet-700">{order === 'fp' ? 'FP' : 'ROS'} #{order === 'fp' ? best.fp_rank : best.fp_ros_rank}</span>}
                     {delta != null && (up
-                      ? <span className="text-[11px] font-semibold text-emerald-700" title={`Better than your best this week by ${fmt(delta, 1)} implied points`}>▲{fmt(delta, 1)}</span>
-                      : <span className="text-[11px] text-stone-500" title={`Worse than yours this week by ${fmt(delta, 1)} implied points`}>▼{fmt(delta, 1)}</span>)}
+                      ? <span className="text-[11px] font-semibold text-emerald-700" title={`Better than your best by ${fmt(delta, order === 'week' ? 1 : 0)} ${unit}`}>▲{fmt(delta, order === 'week' ? 1 : 0)}</span>
+                      : <span className="text-[11px] text-stone-500" title={`Behind your best by ${fmt(delta, order === 'week' ? 1 : 0)} ${unit}`}>▼{fmt(delta, order === 'week' ? 1 : 0)}</span>)}
                     {bestSt?.status === 'waivers' && <span className="rounded bg-amber-100 px-1 py-0.5 text-[9.5px] font-semibold leading-none text-amber-800">W</span>}
                   </span>
                 )}
@@ -284,9 +311,13 @@ function Yours({ pos, rows, leagues, weeks, at, pickOf, onPick }: {
 }
 
 /** Every unit at the position: its next four weeks, then where it stands in each league. */
-function Matrix({ pos, rows, leagues, weeks, at, setAt, pickOf, onPick }: {
-  pos: Pos; rows: Streamer[]; leagues: StreamingLeague[]; weeks: number[]; at: number; setAt: (i: number) => void; pickOf: PickOf; onPick: OnPick
+function Matrix({ pos, rows, leagues, weeks, at, setAt, order, setOrder, pickOf, onPick }: {
+  pos: Pos; rows: Streamer[]; leagues: StreamingLeague[]; weeks: number[]; at: number; setAt: (i: number) => void
+  order: Order; setOrder: (o: Order) => void; pickOf: PickOf; onPick: OnPick
 }) {
+  const hasFp = rows.some((s) => s.fp_rank != null)
+  const hasRos = rows.some((s) => s.fp_ros_rank != null)
+  const sortBtn = (active: boolean) => `whitespace-nowrap rounded px-1.5 py-0.5 uppercase disabled:cursor-default disabled:opacity-40 ${active ? 'bg-stone-900 text-white' : 'hover:bg-stone-100 hover:text-stone-700 disabled:hover:bg-transparent'}`
   const k = pos === 'K'
   return (
     <div className="overflow-x-auto rounded-md border border-stone-200 bg-white">
@@ -298,15 +329,16 @@ function Matrix({ pos, rows, leagues, weeks, at, setAt, pickOf, onPick }: {
               {k ? 'Own team implied total — higher is better' : 'Opponent implied total — lower is better'}
             </th>
             <th className={`${th} border-l border-stone-100 text-center`} colSpan={leagues.length}>Your leagues</th>
-            <th className={`${th} border-l border-stone-100 text-center`} colSpan={2} title="FantasyPros expert consensus. Not part of the ordering — this table is ranked on Vegas alone, and where the two disagree is the thing to look at.">FantasyPros</th>
+            <th className={`${th} border-l border-stone-100 text-center`} colSpan={2} title="FantasyPros expert consensus. Click Wk or ROS to order the table by it instead of by Vegas — where the two disagree is the thing to look at.">FantasyPros</th>
             {k && <th className={`${th} border-l border-stone-100 text-center`} colSpan={5}>Offense, season to date</th>}
           </tr>
           <tr>
             {weeks.map((w, i) => (
               <th key={w} className={`${th} text-center ${i === 0 ? 'border-l border-stone-100' : ''}`}>
-                <button onClick={() => setAt(i)} title={`Order by week ${w}`}
-                        className={`whitespace-nowrap rounded px-1.5 py-0.5 uppercase ${i === at ? 'bg-stone-900 text-white' : 'hover:bg-stone-100 hover:text-stone-700'}`}>
-                  Wk {w}{i === at ? ' ▾' : ''}
+                <button onClick={() => { setAt(i); setOrder('week') }}
+                        title={order === 'week' ? `Order by week ${w}` : i === at ? `Picking for week ${w} — click to order by its line again` : `Order by week ${w}`}
+                        className={`${sortBtn(order === 'week' && i === at)} ${order !== 'week' && i === at ? 'ring-1 ring-stone-400' : ''}`}>
+                  Wk {w}{order === 'week' && i === at ? ' ▾' : ''}
                 </button>
               </th>
             ))}
@@ -321,8 +353,18 @@ function Matrix({ pos, rows, leagues, weeks, at, setAt, pickOf, onPick }: {
                 </span>
               </th>
             ))}
-            <th className={`${th} border-l border-stone-100 text-center`} title="Rank for this week only">Wk</th>
-            <th className={`${th} text-center`} title="Rest-of-season rank — who is worth holding rather than who is best this Sunday">ROS</th>
+            <th className={`${th} border-l border-stone-100 text-center`}>
+              <button onClick={() => setOrder('fp')} disabled={!hasFp} className={sortBtn(order === 'fp')}
+                      title={hasFp ? `FantasyPros' rank for week ${weeks[0]} only — click to order by it` : `No FantasyPros ranks for week ${weeks[0]} yet — run update-fantasypros-data`}>
+                Wk{order === 'fp' ? ' ▾' : ''}
+              </button>
+            </th>
+            <th className={`${th} text-center`}>
+              <button onClick={() => setOrder('ros')} disabled={!hasRos} className={sortBtn(order === 'ros')}
+                      title="Rest-of-season rank — who is worth holding rather than who is best this Sunday. Click to order by it.">
+                ROS{order === 'ros' ? ' ▾' : ''}
+              </button>
+            </th>
             {k && <>
               <th className={`${th} border-l border-stone-100 text-center`} title="Share of red-zone trips ending in a touchdown. LOW is good for a kicker — a team that stalls inside the 20 kicks three points instead of scoring six and leaving him the extra point.">RZ TD</th>
               <th className={`${th} text-center`} title="Share of red-zone trips ending in a field-goal attempt. The same split read from the kicker's side, so high is good.">RZ FG</th>
@@ -511,6 +553,7 @@ export default function Streaming() {
   const qc = useQueryClient()
   const [tab, setTab] = useState<Pos>('DEF')
   const [at, setAt] = useState(0)
+  const [order, setOrder] = useState<Order>('week')
   const { data, isLoading, error } = useQuery({
     queryKey: ['streaming'],
     queryFn: () => api.streaming(),
@@ -525,9 +568,9 @@ export default function Streaming() {
   const weeks = data?.weeks ?? []
   const week = Math.min(at, Math.max(0, weeks.length - 1))
   const sorted = useMemo(() => ({
-    DEF: data ? sortBy(data.DEF, 'DEF', week) : [],
-    K: data ? sortBy(data.K, 'K', week) : [],
-  }), [data, week])
+    DEF: data ? sortBy(data.DEF, 'DEF', order, week) : [],
+    K: data ? sortBy(data.K, 'K', order, week) : [],
+  }), [data, order, week])
 
   const pickOf: PickOf = (leagueId, pos, w) =>
     picks?.find((p) => p.league_id === leagueId && p.position === pos && p.week === w)?.player_id ?? null
@@ -539,14 +582,9 @@ export default function Streaming() {
   }
   const onClear = (leagueId: string, pos: Pos, w: number) => save.mutate({ league_id: leagueId, position: pos, week: w, player_id: null })
   // Leagues where something open beats everything you have at the position, for the tab badges.
-  const upgrades = (pos: Pos) => (data?.leagues ?? []).filter((lg) => {
-    if (!lg.slots[pos]) return false
-    const rows = sorted[pos]
-    const best = rows.find((s) => open(s.leagues[lg.league_id]) && basis(s, pos, week) != null)
-    if (!best) return false
-    const vals = mineIn(rows, lg.league_id).map((s) => basis(s, pos, week)).filter((v): v is number => v != null)
-    return !vals.length || vals.every((v) => beats(pos, basis(best, pos, week)!, v))
-  }).length
+  const upgrades = (pos: Pos) => (data?.leagues ?? [])
+    .filter((lg) => lg.slots[pos] && bestOpen(sorted[pos], lg.league_id, pos, order, week)?.up).length
+  const orderedBy = order === 'fp' ? `FantasyPros' week ${weeks[0]} rank` : order === 'ros' ? "FantasyPros' rest-of-season rank" : `week ${weeks[week]}'s line`
   const games = data?.K.find((s) => s.factors?.games != null)?.factors?.games ?? null
 
   return (
@@ -581,7 +619,7 @@ export default function Streaming() {
               <button key={key} onClick={() => setTab(key)}
                       className={`rounded px-3 py-1 text-[12px] ${tab === key ? 'bg-stone-900 text-white' : 'text-stone-700 hover:bg-stone-100'}`}>
                 {label}
-                {n > 0 && <span title={`${n} league${n === 1 ? '' : 's'} with something open that beats yours in week ${weeks[week]}`}
+                {n > 0 && <span title={`${n} league${n === 1 ? '' : 's'} with something open that beats yours on ${orderedBy}`}
                                 className={`ml-1.5 ${tab === key ? 'text-emerald-300' : 'text-emerald-700'}`}>▲{n}</span>}
               </button>
             )
@@ -600,16 +638,21 @@ export default function Streaming() {
         <>
           <section className="space-y-1.5">
             <h2 className="text-[12px] font-semibold uppercase tracking-wide text-stone-500">Yours, by league</h2>
-            <Yours pos={tab} rows={sorted[tab]} leagues={data.leagues} weeks={weeks} at={week} pickOf={pickOf} onPick={onPick(tab)} />
+            <Yours pos={tab} rows={sorted[tab]} leagues={data.leagues} weeks={weeks} at={week} order={order} pickOf={pickOf} onPick={onPick(tab)} />
           </section>
 
           <section className="space-y-1.5">
             <h2 className="text-[12px] font-semibold uppercase tracking-wide text-stone-500">{tab === 'K' ? 'Every kicker' : 'Every defense'}</h2>
             <p className="text-[12px] text-stone-500">
               {tab === 'DEF'
-                ? <>Ordered by the opponent's implied total in week {weeks[week]}, lowest first — a defence scores off the other team failing. Click a week to order by it instead.
+                ? <>{order === 'week'
+                    ? <>Ordered by the opponent's implied total in week {weeks[week]}, lowest first — a defence scores off the other team failing. Click a week to order by it instead, or the FantasyPros Wk / ROS headers to order by the experts.</>
+                    : <>Ordered by {orderedBy}, best first — click a week to go back to ordering by the line.</>}
                   A <span className="rounded bg-stone-800 px-1 text-[10px] font-bold uppercase text-white">dark tag</span> flags extreme weather in the forecast (20+ mph wind, 35+ mph gusts, snow or heavy rain) — ordinary weather is already in the line.</>
-                : <>Ordered by the kicker's own team implied total in week {weeks[week]}, highest first — click a week to order by it instead. A kicker's points follow his offence's <em>volume</em> rather than who it is playing, so the right-hand columns describe the offence: how often it stalls in the red zone, how well it sustains drives, how often the staff takes the kick away on fourth down, and what that adds up to in attempts.
+                : <>{order === 'week'
+                    ? <>Ordered by the kicker's own team implied total in week {weeks[week]}, highest first — click a week to order by it instead, or the FantasyPros Wk / ROS headers to order by the experts.</>
+                    : <>Ordered by {orderedBy}, best first — click a week to go back to ordering by the line.</>}
+                  {' '}A kicker's points follow his offence's <em>volume</em> rather than who it is playing, so the right-hand columns describe the offence: how often it stalls in the red zone, how well it sustains drives, how often the staff takes the kick away on fourth down, and what that adds up to in attempts.
                   {games != null && <> Season to date — <span className="font-medium text-stone-600">{games} game{games === 1 ? '' : 's'}</span>, so read the rates as a first signal.</>}
                   {' '}Limited to the kickers FantasyPros ranks this week, plus yours.
                   {' '}Under each game: <span className="text-stone-600">⌂ dome</span> or <span className="text-stone-600">⌂ roof</span> (retractable) indoors, otherwise the forecast wind in mph, gusts, rain or snow and freezing temperatures —
@@ -618,7 +661,7 @@ export default function Streaming() {
               (<span className="font-semibold text-emerald-700">FA</span>, or <span className="font-semibold text-amber-700">W</span> on waivers), or whose he is;
               your pick for the week is outlined in <span className="rounded bg-amber-100 px-1 font-semibold text-amber-900 ring-1 ring-amber-400">amber</span>. Rows open nowhere are faded.
             </p>
-            <Matrix pos={tab} rows={sorted[tab]} leagues={data.leagues} weeks={weeks} at={week} setAt={setAt} pickOf={pickOf} onPick={onPick(tab)} />
+            <Matrix pos={tab} rows={sorted[tab]} leagues={data.leagues} weeks={weeks} at={week} setAt={setAt} order={order} setOrder={setOrder} pickOf={pickOf} onPick={onPick(tab)} />
           </section>
         </>
       )}
