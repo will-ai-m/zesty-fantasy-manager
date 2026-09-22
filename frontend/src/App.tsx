@@ -2,10 +2,8 @@ import { Navigate, Route, Routes } from 'react-router-dom'
 import { Layout } from './components/Layout'
 import Waivers from './pages/Waivers'
 import Games from './pages/Games'
-import Roster from './pages/Roster'
 import Streaming from './pages/Streaming'
 import League from './pages/League'
-import Planner from './pages/Planner'
 
 export default function App() {
   return (
@@ -14,10 +12,11 @@ export default function App() {
         <Route index element={<Navigate to="/waivers" replace />} />
         <Route path="/waivers" element={<Waivers />} />
         <Route path="/games" element={<Games />} />
-        <Route path="/roster" element={<Roster />} />
         <Route path="/streaming" element={<Streaming />} />
         <Route path="/league" element={<League />} />
-        <Route path="/planner" element={<Planner />} />
+        {/* Roster was folded into League and the Planner removed; old links land somewhere real. */}
+        <Route path="/roster" element={<Navigate to="/league" replace />} />
+        <Route path="*" element={<Navigate to="/waivers" replace />} />
       </Route>
     </Routes>
   )

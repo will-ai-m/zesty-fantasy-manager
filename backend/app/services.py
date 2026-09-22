@@ -1105,15 +1105,6 @@ class Service:
             "flags": flags,
         }
 
-    async def roster(self, league_id: str, week: int | None) -> dict:
-        b = await self._league_bundle(league_id)
-        st = await self.state()
-        week = week or st["current_week"]
-        ctx = await self._week_context(b, week)
-        if not b["my_roster"]:
-            return {"league": self._league_summary(b), "week": week, "roster": None}
-        return {"league": self._league_summary(b), "week": week, "roster": self._roster_view(ctx, b, b["my_roster"])}
-
     async def rosters(self, league_id: str, week: int | None) -> dict:
         b = await self._league_bundle(league_id)
         st = await self.state()

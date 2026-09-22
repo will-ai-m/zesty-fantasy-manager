@@ -2,7 +2,7 @@
 
 Personal fantasy football manager for Sleeper and ESPN leagues (Yahoo once its API application is
 approved). Read-only against every platform: it shows you the waiver wire, trends, and your rosters across
-leagues and lets you plan moves; you make the actual moves on the platform.
+leagues and lets you pick your streamers; you make the actual moves on the platform.
 
 ## What it does
 
@@ -11,13 +11,15 @@ leagues and lets you plan moves; you make the actual moves on the platform.
   scoring, position ranks, last season PPG, depth chart, opponent and bye. The **vs mine** column is the
   rest-of-season gap to the weakest player you roster at that position, so upgrades sort to the top.
 - **Trends** — Sleeper's top-100 adds/drops with, for each of your leagues, whether the player is free,
-  yours, or owned (by whom), plus projections under that league's scoring. One click to plan a pickup.
-- **Roster** — your lineup by slot with bye/injury flags, an optimal-lineup suggestion (Hungarian
-  assignment over projections), IR housekeeping hints, and an all-leagues view of every player you own.
-- **League** — standings with FAAB remaining and waiver order, every roster (expandable), and recent
-  transactions including winning FAAB bids.
-- **Planner** — queue adds/drops/bids per league, see FAAB after planned bids, mark done once you make
-  the move in Sleeper. Stored in `data/plans.json`.
+  yours, or owned (by whom), plus projections under that league's scoring.
+- **Streaming** — every K and D/ST with the next four weeks of Vegas lines, and where each one is yours,
+  open or taken in every league at once. Click one to make it your pick for a league and week; the picks
+  board says what each still takes (add, claim, start) and ticks itself off once it is in your lineup.
+  Stored in `data/stream_picks.json`.
+- **League** — your lineup by slot with bye/injury flags and an optimal-lineup suggestion (Hungarian
+  assignment over projections), then standings with FAAB remaining and waiver order, every other roster
+  (expandable), and recent transactions including winning FAAB bids. An **All leagues** toggle shows every
+  player you own across leagues.
 
 ## Configure
 
@@ -60,10 +62,10 @@ The ↻ button in the header drops the cache.
   Yahoo supplies the pool and ownership. FAAB balance and waiver priority are client-rendered and unavailable.
 - `backend/app/ids.py` — player identity: Sleeper `player_id` is canonical; ESPN/Yahoo ids map onto it via
   Sleeper's cross-ids, the nflverse crosswalk, then a name + position match.
-- `backend/app/services.py` — builds the view models (waivers, roster, trends, transactions).
+- `backend/app/services.py` — builds the view models (waivers, streaming, rosters, transactions).
 - `backend/app/scoring.py` — league points = Σ stat × scoring_settings weight.
 - `backend/app/lineup.py` — optimal lineup assignment.
-- `backend/app/plans.py` — moves planner store.
+- `backend/app/picks.py` — streaming picks store.
 - `frontend/src/pages/*` — one file per page; `components/DataTable.tsx` is the shared sortable table.
 - `research/` — API research notes (Sleeper, FantasyPros, other sources).
 

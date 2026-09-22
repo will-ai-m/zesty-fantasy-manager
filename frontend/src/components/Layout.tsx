@@ -5,16 +5,13 @@ import { api, type LeagueSummary } from '../api'
 import { useApp } from './AppContext'
 import { ErrorBox, LeagueBar, PlatformBadge, Spinner } from './Badges'
 import { PlayerDrawer } from './PlayerDrawer'
-import { PlanDialog } from './PlanDialog'
 import { SidebarGames } from './SidebarGames'
 import { load, save } from '../lib/prefs'
 
 const nav = [
   { to: '/waivers', label: 'Waivers' },
   { to: '/streaming', label: 'Streaming' },
-  { to: '/roster', label: 'Roster' },
   { to: '/league', label: 'League' },
-  { to: '/planner', label: 'Planner' },
 ]
 
 const record = (t: NonNullable<LeagueSummary['my_team']>) =>
@@ -154,7 +151,6 @@ export function Layout() {
       </div>
 
       <PlayerDrawer />
-      <PlanDialog />
     </div>
   )
 }

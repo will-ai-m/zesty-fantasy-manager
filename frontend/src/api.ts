@@ -309,7 +309,6 @@ export interface RosterView {
   flags: { level: 'error' | 'warn' | 'info'; text: string }[]
 }
 
-export interface RosterResponse { league: LeagueSummary; week: number; roster: RosterView | null }
 export interface RostersResponse { league: LeagueSummary; week: number; rosters: RosterView[] }
 
 export interface TxPlayer { player_id: string; name: string; position: string | null; team: string | null; roster: Owner | null }
@@ -357,23 +356,6 @@ export interface PlayerDetail {
   previous_season: WeekRow[]
 }
 
-
-export type PlanStatus = 'planned' | 'done' | 'skipped'
-export interface Plan {
-  id: string
-  league_id: string
-  add_player_id: string | null
-  drop_player_id: string | null
-  bid: number | null
-  note: string
-  target_week: number | null
-  status: PlanStatus
-  created_at: number
-  updated_at: number
-  add_player?: PlanPlayer | null
-  drop_player?: PlanPlayer | null
-}
-export interface PlanPlayer { player_id: string; name: string; position: string | null; team: string | null }
 
 async function http<T>(url: string, init?: RequestInit): Promise<T> {
   const res = await fetch(url, { headers: { 'content-type': 'application/json' }, ...init })
@@ -438,16 +420,10 @@ export const api = {
   streamPicks: () => http<StreamPick[]>('/api/stream-picks'),
   setStreamPick: (body: PickKey & { player_id: string }) => http<StreamPick[]>('/api/stream-picks', { method: 'PUT', body: JSON.stringify(body) }),
   clearStreamPick: (key: PickKey) => http<StreamPick[]>(`/api/stream-picks${q(key)}`, { method: 'DELETE' }),
-  roster: (leagueId: string, week?: number) => http<RosterResponse>(`/api/leagues/${leagueId}/roster${q({ week })}`),
   rosters: (leagueId: string, week?: number) => http<RostersResponse>(`/api/leagues/${leagueId}/rosters${q({ week })}`),
   transactions: (leagueId: string, weeks = 3) => http<TransactionsResponse>(`/api/leagues/${leagueId}/transactions${q({ weeks })}`),
   games: (week?: number) => http<GamesResponse>(`/api/games${q({ week })}`),
   myPlayers: (week?: number) => http<MyPlayersResponse>(`/api/my-players${q({ week })}`),
   player: (playerId: string, leagueId?: string | null) => http<PlayerDetail>(`/api/players/${playerId}${q({ league_id: leagueId })}`),
-  plans: () => http<Plan[]>('/api/plans'),
-  createPlan: (body: Omit<Plan, 'id' | 'status' | 'created_at' | 'updated_at' | 'add_player' | 'drop_player'>) => http<Plan>('/api/plans', { method: 'POST', body: JSON.stringify(body) }),
-  patchPlan: (id: string, body: Partial<Pick<Plan, 'add_player_id' | 'drop_player_id' | 'bid' | 'note' | 'status' | 'target_week'>>) =>
-    http<Plan>(`/api/plans/${id}`, { method: 'PATCH', body: JSON.stringify(body) }),
-  deletePlan: (id: string) => http<void>(`/api/plans/${id}`, { method: 'DELETE' }),
   refresh: () => http<{ ok: boolean }>('/api/cache/refresh', { method: 'POST' }),
 }

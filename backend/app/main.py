@@ -4,7 +4,7 @@ from contextlib import asynccontextmanager
 from typing import Literal
 
 import httpx
-from fastapi import FastAPI, HTTPException, Query
+from fastapi import FastAPI, Query
 from fastapi.middleware.cors import CORSMiddleware
 from fastapi.responses import JSONResponse
 
@@ -13,7 +13,7 @@ from .config import DATA_DIR, ESPN_LEAGUE_IDS, ESPN_S2, ESPN_SWID, YAHOO_COOKIE,
 from .espn import Espn
 from .yahoo import Yahoo
 from .odds import Odds
-from .plans import PickIn, PickStore, PlanIn, PlanPatch, PlanStore
+from .picks import PickIn, PickStore
 from .services import Service
 from .sleeper import Sleeper
 
@@ -31,7 +31,6 @@ async def lifespan(app: FastAPI):
     odds = Odds(cache)
     app.state.odds = odds
     app.state.service = Service(sleeper, espn, yahoo, odds)
-    app.state.plans = PlanStore(DATA_DIR / "plans.json")
     app.state.picks = PickStore(DATA_DIR / "stream_picks.json")
     yield
     await app.state.odds.aclose()
@@ -86,11 +85,6 @@ async def streaming(week: int | None = Query(default=None, ge=1, le=18)):
     return await svc().streaming(week)
 
 
-@app.get("/api/leagues/{league_id}/roster")
-async def roster(league_id: str, week: int | None = Query(default=None, ge=1, le=18)):
-    return await svc().roster(league_id, week)
-
-
 @app.get("/api/leagues/{league_id}/rosters")
 async def rosters(league_id: str, week: int | None = Query(default=None, ge=1, le=18)):
     return await svc().rosters(league_id, week)
@@ -128,51 +122,6 @@ async def player(player_id: str, league_id: str | None = None):
 async def refresh(prefix: str = ""):
     app.state.cache.invalidate(prefix)
     return {"ok": True}
-
-
-# ---- plans --------------------------------------------------------------
-def _plan_player(players: dict, pid: str | None) -> dict | None:
-    if not pid:
-        return None
-    p = players.get(pid, {})
-    name = p.get("full_name") or (f"{p.get('team')} D/ST" if p.get("position") == "DEF" else pid)
-    return {"player_id": pid, "name": name, "position": p.get("position"), "team": p.get("team")}
-
-
-@app.get("/api/plans")
-async def list_plans():
-    store: PlanStore = app.state.plans
-    players = await app.state.sleeper.players()
-    out = []
-    for plan in await store.list():
-        d = plan.model_dump()
-        d["add_player"] = _plan_player(players, plan.add_player_id)
-        d["drop_player"] = _plan_player(players, plan.drop_player_id)
-        out.append(d)
-    return out
-
-
-@app.post("/api/plans", status_code=201)
-async def create_plan(body: PlanIn):
-    store: PlanStore = app.state.plans
-    return (await store.create(body)).model_dump()
-
-
-@app.patch("/api/plans/{plan_id}")
-async def patch_plan(plan_id: str, body: PlanPatch):
-    store: PlanStore = app.state.plans
-    plan = await store.patch(plan_id, body)
-    if plan is None:
-        raise HTTPException(404, "plan not found")
-    return plan.model_dump()
-
-
-@app.delete("/api/plans/{plan_id}", status_code=204)
-async def delete_plan(plan_id: str):
-    store: PlanStore = app.state.plans
-    if not await store.delete(plan_id):
-        raise HTTPException(404, "plan not found")
-    return None
 
 
 # ---- streaming picks ----------------------------------------------------

@@ -48,7 +48,7 @@ function usageColumns(lastWeek: number): Column<Player>[] {
  * `lineup` is "should I start this" — they are already mine, so the market says nothing.
  * Backward-looking scoring (last week, PPG, last season) lives in the player drawer, which
  * carries the full per-week game log for both seasons. */
-export function playerColumns(opts: { week: number; rosEnd: number; onPlan?: (p: Player) => void; showRank?: boolean; vsMine?: boolean; espn?: boolean; fp?: boolean; fpWaiver?: boolean; usage?: number; owned?: boolean; livePts?: boolean; variant?: 'waiver' | 'lineup' }): Column<Player>[] {
+export function playerColumns(opts: { week: number; rosEnd: number; showRank?: boolean; vsMine?: boolean; espn?: boolean; fp?: boolean; fpWaiver?: boolean; usage?: number; owned?: boolean; livePts?: boolean; variant?: 'waiver' | 'lineup' }): Column<Player>[] {
   // The market view is the waiver default, but a lineup can ask for ownership explicitly — on
   // your own roster it is not "should I add him" but "is the rest of the world starting him".
   const market = opts.owned ?? (opts.variant ?? 'waiver') === 'waiver'
@@ -134,20 +134,13 @@ export function playerColumns(opts: { week: number; rosEnd: number; onPlan?: (p:
       sort: (p) => p.vs_mine, align: 'right', desc: true,
     })
   }
-  if (opts.onPlan) {
-    cols.push({
-      key: 'plan', header: '', render: (p) => (
-        <button onClick={() => opts.onPlan!(p)} className="rounded border border-stone-300 px-2 py-0.5 text-[11px] text-stone-700 hover:border-amber-400 hover:bg-amber-50">Plan</button>
-      ), align: 'center',
-    })
-  }
   return cols
 }
 
 /** Each panel answers one question, so it carries only the columns that answer it. Everything a
  * player is doing elsewhere is a click away in the drawer; repeating all of it in all four panels
  * is what made the page a scroll. Identity (name, position, opponent) is the only shared spine. */
-function panelColumns(kind: 'fp' | 'production' | 'move', opts: { week: number; lastWeek: number; move?: Movement['kind']; claimed?: Map<string, number | null>; onPlan?: (p: Player) => void }): Column<Target>[] {
+function panelColumns(kind: 'fp' | 'production' | 'move', opts: { week: number; lastWeek: number; move?: Movement['kind']; claimed?: Map<string, number | null> }): Column<Target>[] {
   const identity: Column<Target>[] = [
     {
       key: 'name', header: 'Player',
@@ -216,15 +209,7 @@ function panelColumns(kind: 'fp' | 'production' | 'move', opts: { week: number; 
     ]
   }
 
-  const cols = [...lead, ...identity, ...trail]
-  if (opts.onPlan) {
-    cols.push({
-      key: 'plan', header: '', render: (t) => (
-        <button onClick={() => opts.onPlan!(t)} className="rounded border border-stone-300 px-1.5 py-0.5 text-[10px] text-stone-700 hover:border-amber-400 hover:bg-amber-50">+</button>
-      ), align: 'center',
-    })
-  }
-  return cols
+  return [...lead, ...identity, ...trail]
 }
 
 /** One ranked panel. The table scrolls inside a fixed height so four panels stay on one screen
@@ -367,7 +352,7 @@ function ArticleBlock({ digest }: { digest: ArticleDigest }) {
 type Tab = 'targets' | 'browse'
 
 export default function Waivers() {
-  const { leagueId, league, week, openPlan } = useApp()
+  const { leagueId, league, week } = useApp()
   // Deliberately not keyed on the app's week selector: a waiver claim always processes into the
   // *upcoming* week, so the server decides which week that is rather than the lineup-view week.
   const { data, isLoading, error } = useQuery({
@@ -433,17 +418,14 @@ export default function Waivers() {
 
   const browseColumns = useMemo(() => playerColumns({
     week: targetWeek, rosEnd: data?.ros_end_week ?? 17, showRank: true, vsMine: true, espn: league?.platform === 'espn', fp: true, fpWaiver: true, usage: lastWeek,
-    onPlan: (p) => leagueId && openPlan({ leagueId, add: p }),
-  }), [targetWeek, lastWeek, data?.ros_end_week, leagueId, openPlan, league?.platform])
+  }), [targetWeek, lastWeek, data?.ros_end_week, league?.platform])
 
   const claimed = useMemo(() => {
     const m = new Map<string, number | null>()
     for (const c of data?.pending ?? []) if (c.player_id) m.set(c.player_id, c.bid)
     return m
   }, [data?.pending])
-  const colOpts = useMemo(() => ({
-    week: targetWeek, lastWeek, claimed, onPlan: (p: Player) => leagueId && openPlan({ leagueId, add: p }),
-  }), [targetWeek, lastWeek, claimed, leagueId, openPlan])
+  const colOpts = useMemo(() => ({ week: targetWeek, lastWeek, claimed }), [targetWeek, lastWeek, claimed])
   const fpCols = useMemo(() => panelColumns('fp', colOpts), [colOpts])
   const prodCols = useMemo(() => panelColumns('production', colOpts), [colOpts])
   const moveCols = useMemo(() => panelColumns('move', { ...colOpts, move: data?.movement?.kind }), [colOpts, data?.movement?.kind])

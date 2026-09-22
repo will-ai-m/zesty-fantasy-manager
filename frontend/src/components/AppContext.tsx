@@ -1,14 +1,8 @@
 import { createContext, useCallback, useContext, useEffect, useMemo, useState, type ReactNode } from 'react'
 import { useQuery } from '@tanstack/react-query'
-import { api, type LeagueSummary, type Me, type Player } from '../api'
+import { api, type LeagueSummary, type Me } from '../api'
 import { load, save } from '../lib/prefs'
 import { assignLeagueColors, FALLBACK_COLOR } from '../lib/leagueColors'
-
-export interface PlanDraft {
-  leagueId: string
-  add?: Pick<Player, 'player_id' | 'name' | 'position' | 'team'> | null
-  drop?: Pick<Player, 'player_id' | 'name' | 'position' | 'team'> | null
-}
 
 interface AppState {
   me: Me | undefined
@@ -26,9 +20,6 @@ interface AppState {
   drawerPlayer: string | null
   openPlayer: (playerId: string) => void
   closePlayer: () => void
-  planDraft: PlanDraft | null
-  openPlan: (draft: PlanDraft) => void
-  closePlan: () => void
 }
 
 const Ctx = createContext<AppState | null>(null)
@@ -37,7 +28,6 @@ export function AppProvider({ children }: { children: ReactNode }) {
   const { data: me, isLoading, error } = useQuery({ queryKey: ['me'], queryFn: api.me, staleTime: 60_000 })
   const [leagueId, setLeagueIdState] = useState<string | null>(() => load<string | null>('leagueId', null))
   const [drawerPlayer, setDrawerPlayer] = useState<string | null>(null)
-  const [planDraft, setPlanDraft] = useState<PlanDraft | null>(null)
 
   const leagues = useMemo(() => (me?.leagues ?? []).filter((l) => !l.error), [me])
   const erroredLeagues = useMemo(() => (me?.leagues ?? []).filter((l) => !!l.error), [me])
@@ -74,10 +64,7 @@ export function AppProvider({ children }: { children: ReactNode }) {
     drawerPlayer,
     openPlayer: setDrawerPlayer,
     closePlayer: () => setDrawerPlayer(null),
-    planDraft,
-    openPlan: setPlanDraft,
-    closePlan: () => setPlanDraft(null),
-  }), [me, isLoading, error, leagues, erroredLeagues, leagueId, setLeagueId, leagueColor, drawerPlayer, planDraft])
+  }), [me, isLoading, error, leagues, erroredLeagues, leagueId, setLeagueId, leagueColor, drawerPlayer])
 
   return <Ctx.Provider value={value}>{children}</Ctx.Provider>
 }
