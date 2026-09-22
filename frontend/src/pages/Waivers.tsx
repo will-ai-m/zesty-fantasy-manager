@@ -1,6 +1,7 @@
 import { useEffect, useMemo, useState, type ReactNode } from 'react'
 import { useQuery } from '@tanstack/react-query'
 import { api, type ArticleDigest, type ArticleItem, type Platform, type Player, type Target, type WaiverLeague, type WaiverStanding } from '../api'
+import { load, save } from '../lib/prefs'
 import { fmt, fmtInt, gameDayRowClass, OUT_STATUSES, pct, POS_ORDER, shortDate } from '../lib/format'
 import { useApp } from '../components/AppContext'
 import { ErrorBox, LeagueBar, PlatformBadge, PlayerCell, Pos, Spinner } from '../components/Badges'
@@ -158,7 +159,7 @@ function StandingCell({ st, lg }: { st: WaiverStanding | undefined; lg: WaiverLe
       ? <span title={`Yours in ${lg.name}, starting`} className="rounded bg-sky-600 px-1.5 py-0.5 text-[9.5px] font-bold leading-none text-white">START</span>
       : <span title={`Yours in ${lg.name}`} className="rounded border border-sky-300 bg-white px-1.5 py-0.5 text-[9.5px] font-bold leading-none text-sky-700">{st.role === 'BN' ? 'BENCH' : st.role}</span>
   }
-  if (st.status === 'taken') return <span title={`Rostered by ${st.owner}`} className="mx-auto block max-w-[4.5rem] truncate text-[10.5px] text-stone-400">{st.owner}</span>
+  if (st.status === 'taken') return <span title={`Rostered by ${st.owner}`} className="mx-auto block max-w-[4rem] truncate text-[10.5px] text-stone-400">{st.owner}</span>
   const w = st.status === 'waivers'
   const gain = st.vs_mine
   const tip = `${w ? `On waivers in ${lg.name}${st.until ? ` until ${shortDate(st.until)}` : ''}` : `Free agent in ${lg.name}`}.`
@@ -183,11 +184,25 @@ function standingSort(st: WaiverStanding | undefined): number | null {
 /** The columns for a waiver-list or trends table: who he is, what FantasyPros thinks of him for
  * the rest of the season, what he did on the field last week, and where he is open. `lead` is
  * whatever orders the list — FantasyPros' rank, or a platform's movement numbers. */
-function targetColumns(lead: Column<Target>[], opts: { week: number; lastWeek: number; leagues: WaiverLeague[] }): Column<Target>[] {
+function targetColumns(lead: Column<Target>[], opts: { week: number; lastWeek: number; leagues: WaiverLeague[]; stars: Set<string>; onStar: (id: string) => void }): Column<Target>[] {
   const lw = opts.lastWeek
   return [
     ...lead,
-    { key: 'name', header: 'Player', render: (t) => <PlayerCell p={t} showPos />, sort: (t) => t.name },
+    {
+      key: 'name', header: 'Player', sort: (t) => t.name,
+      render: (t) => {
+        // The star rides in the name cell rather than a column of its own: the table is already
+        // as wide as a laptop allows.
+        const on = opts.stars.has(t.player_id)
+        return (
+          <span className="inline-flex items-center gap-1.5">
+            <button onClick={() => opts.onStar(t.player_id)} title={on ? 'Unstar' : 'Star this player — the row lights up here and in the trends list'}
+                    className={`text-[13px] leading-none ${on ? 'text-amber-500' : 'text-stone-300 hover:text-amber-400'}`}>{on ? '★' : '☆'}</button>
+            <PlayerCell p={t} showPos />
+          </span>
+        )
+      },
+    },
     { key: 'opp', header: 'Opp', title: `Opponent in week ${opts.week}, the week you are claiming into`, render: (t) => <span className={t.on_bye ? 'text-stone-400' : ''}>{t.on_bye ? 'BYE' : t.opponent ?? '—'}</span>, sort: (t) => t.opponent },
     rosColumn as Column<Target>,
     {
@@ -209,7 +224,7 @@ function targetColumns(lead: Column<Target>[], opts: { week: number; lastWeek: n
       className: i === 0 ? 'border-l border-stone-200' : '',
       title: `${lg.name} — FA / W is open (with "vs mine": places above the player of yours he would replace), otherwise yours or whose`,
       header: (
-        <span className="mx-auto flex max-w-[4.75rem] items-stretch gap-1.5 text-left normal-case">
+        <span className="mx-auto flex max-w-[4.25rem] items-stretch gap-1.5 text-left normal-case">
           <LeagueBar leagueId={lg.league_id} />
           <span className="min-w-0"><PlatformBadge platform={lg.platform} /><span className="mt-0.5 block truncate font-medium text-stone-600">{lg.name}</span></span>
         </span>
@@ -247,8 +262,12 @@ const FP_LEAD: Column<Target>[] = [{
   sort: (t) => t.fp_waiver_rank ?? 9999, align: 'right',
 }]
 
-/** Out of reach everywhere and not yours: kept for the context, but quiet. */
-const reachClass = (t: Target) => {
+/** A starred row gets a warm fill and an amber rule down its left edge, over anything else the row
+ * would carry — the game-day tint, or the fade for a player out of reach everywhere, which is kept
+ * for the context but quiet. Amber because it is the app's "picked" colour: the streaming picks
+ * and the selected league use it too. */
+const rowClassFor = (stars: Set<string>) => (t: Target) => {
+  if (stars.has(t.player_id)) return 'bg-amber-100/70 [&>td:first-child]:shadow-[inset_3px_0_0_0_#f59e0b]'
   const open = Object.values(t.leagues).some((s) => s.status === 'free' || s.status === 'waivers' || s.status === 'mine')
   return `${gameDayRowClass(t)} ${open ? '' : 'opacity-45'}`
 }
@@ -496,6 +515,15 @@ export default function Waivers() {
   const [pos, setPos] = useState('ALL')
   const [hideOut, setHideOut] = useState(false)
   const [trendKind, setTrendKind] = useState<Platform | null>(null)
+  // Starred players, kept in this browser — the ones you are after this week.
+  const [stars, setStars] = useState<Set<string>>(() => new Set(load<string[]>('waiverStars', [])))
+  const onStar = (id: string) => setStars((cur) => {
+    const next = new Set(cur)
+    if (!next.delete(id)) next.add(id)
+    save('waiverStars', [...next])
+    return next
+  })
+  const rowClass = useMemo(() => rowClassFor(stars), [stars])
   // The roster follows the league picked in the sidebar until you switch it here.
   const [rosterLeague, setRosterLeague] = useState<string | null>(leagueId)
   useEffect(() => { if (leagueId) setRosterLeague(leagueId) }, [leagueId])
@@ -512,9 +540,10 @@ export default function Waivers() {
   const trend = d?.trends.find((t) => t.kind === trendKind) ?? d?.trends[0] ?? null
   const trendRows = useMemo(() => (trend?.rows ?? []).filter((t) => shown(t, pos, hideOut)), [trend, pos, hideOut])
 
-  const fpCols = useMemo(() => targetColumns(FP_LEAD, { week: targetWeek, lastWeek, leagues: d?.leagues ?? [] }), [targetWeek, lastWeek, d?.leagues])
-  const trendCols = useMemo(() => targetColumns(movementColumns(trend?.kind ?? 'sleeper'), { week: targetWeek, lastWeek, leagues: d?.leagues ?? [] }),
-    [trend?.kind, targetWeek, lastWeek, d?.leagues])
+  const fpCols = useMemo(() => targetColumns(FP_LEAD, { week: targetWeek, lastWeek, leagues: d?.leagues ?? [], stars, onStar }),
+    [targetWeek, lastWeek, d?.leagues, stars])  // onStar only ever sets state
+  const trendCols = useMemo(() => targetColumns(movementColumns(trend?.kind ?? 'sleeper'), { week: targetWeek, lastWeek, leagues: d?.leagues ?? [], stars, onStar }),
+    [trend?.kind, targetWeek, lastWeek, d?.leagues, stars])
 
   const browseRows = useMemo(() => {
     const q = search.trim().toLowerCase()
@@ -585,7 +614,7 @@ export default function Waivers() {
                 or <span className="font-semibold text-amber-700">W</span> on waivers) and how many places he sits above the player of yours he would replace on the
                 rest-of-season ranking; otherwise yours, or whose. K and D/ST are on the streaming page.
               </p>
-              <DataTable rows={fpRows} columns={fpCols} rowKey={(t) => t.player_id} initialSort={{ key: 'fp_waiver', dir: 'asc' }} rowClass={reachClass} maxHeight="36rem"
+              <DataTable rows={fpRows} columns={fpCols} rowKey={(t) => t.player_id} initialSort={{ key: 'fp_waiver', dir: 'asc' }} rowClass={rowClass} maxHeight="36rem"
                          empty="Nobody on this week's FantasyPros list matches the filters." />
             </section>
 
@@ -607,7 +636,7 @@ export default function Waivers() {
                   ? <ErrorBox error={new Error(`${trend.label}: ${trend.error}`)} />
                   : <DataTable key={trend.kind} rows={trendRows} columns={trendCols} rowKey={(t) => t.player_id}
                                initialSort={{ key: trend.kind === 'espn' ? 'owned_change' : trend.kind === 'yahoo' ? 'adds' : 'adds_24h', dir: 'desc' }}
-                               rowClass={reachClass} maxHeight="30rem" empty="Nothing is moving at this position." />}
+                               rowClass={rowClass} maxHeight="30rem" empty="Nothing is moving at this position." />}
               </section>
             )}
           </div>
