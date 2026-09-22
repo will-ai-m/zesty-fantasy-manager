@@ -13,6 +13,7 @@ from .config import DATA_DIR, ESPN_LEAGUE_IDS, ESPN_S2, ESPN_SWID, YAHOO_COOKIE,
 from .espn import Espn
 from .yahoo import Yahoo
 from .odds import Odds
+from .weather import Weather
 from .picks import PickIn, PickStore
 from .services import Service
 from .sleeper import Sleeper
@@ -30,10 +31,12 @@ async def lifespan(app: FastAPI):
     app.state.yahoo = yahoo
     odds = Odds(cache)
     app.state.odds = odds
-    app.state.service = Service(sleeper, espn, yahoo, odds)
+    weather = Weather(cache)
+    app.state.service = Service(sleeper, espn, yahoo, odds, weather)
     app.state.picks = PickStore(DATA_DIR / "stream_picks.json")
     yield
     await app.state.odds.aclose()
+    await weather.aclose()
     await sleeper.aclose()
     if espn:
         await espn.aclose()

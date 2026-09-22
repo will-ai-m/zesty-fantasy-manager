@@ -1,6 +1,6 @@
 import { useMemo, useState } from 'react'
 import { useMutation, useQuery, useQueryClient } from '@tanstack/react-query'
-import { api, type Standing, type Streamer, type StreamingLeague, type StreamingResponse, type TeamFactors } from '../api'
+import { api, type GameWeather, type Standing, type Streamer, type StreamingLeague, type StreamingResponse, type TeamFactors } from '../api'
 import { fmt, shortDate } from '../lib/format'
 import { ErrorBox, LeagueBar, PlatformBadge, PlayerCell, Spinner } from '../components/Badges'
 
@@ -12,15 +12,52 @@ type PickOf = (leagueId: string, pos: Pos, week: number) => string | null
 const dash = <span className="text-stone-300">·</span>
 const th = 'px-2 py-1 text-[10px] font-medium uppercase tracking-wide text-stone-400'
 
-// Only weather that changes a kick is worth a badge. ESPN reports a condition for every game, so
-// flagging all of them puts "Partly sunny" on two thirds of the rows and buries the two that
-// matter. ESPN carries no wind at all, which is the real limitation here — it can tell you it is
-// raining, never that it is gusting to 25.
-const ADVERSE = /rain|storm|snow|shower|sleet|drizzle|wind|fog|blizzard|flurr/i
-function adverse(w: { summary: string | null; temperature: number | null } | null | undefined) {
-  if (!w?.summary) return null
-  if (ADVERSE.test(w.summary)) return w.summary
-  return w.temperature != null && w.temperature <= 32 ? `${w.temperature}°F` : null
+/** A kicker's conditions for one game, as a line under the matchup. Every game gets one, because
+ * the roof is known weeks ahead and a dome is the best thing a kicker's schedule can hold.
+ *
+ * Wind leads because wind is what moves a kick: accuracy falls away from about 12 mph sustained
+ * and sharply past 18, and it is the long attempts that go first. Rain and cold matter less —
+ * a wet or cold ball mostly costs range. Gusts only show when they clearly exceed the steady
+ * wind; the model sometimes has them lower, which says nothing. */
+function kickerWeather(wx: GameWeather | null): { text: string; tone: string; tip: string } | null {
+  if (!wx) return null
+  if (wx.roof === 'dome') return { text: '⌂ dome', tone: 'text-stone-500', tip: `${wx.stadium} — indoors, no weather.` }
+  if (wx.roof === 'retractable') return { text: '⌂ roof', tone: 'text-stone-500', tip: `${wx.stadium} — retractable roof, closed when the weather is bad.` }
+  const f = wx.forecast
+  if (!f) return { text: 'open air', tone: 'text-stone-300', tip: `${wx.stadium} — outdoors. The forecast appears within a week of kickoff.` }
+  const wind = f.wind ?? 0
+  const gust = Math.max(f.gust ?? 0, wind)
+  const wet = f.snow >= 0.1 ? 'snow' : (f.precip_prob ?? 0) >= 50 || f.precip >= 0.1 ? `rain ${f.precip_prob ?? '?'}%` : null
+  const cold = f.temp != null && f.temp <= 32
+  const parts = [`${wind} mph`, ...(gust >= wind + 5 ? [`g${gust}`] : []), ...(wet ? [wet] : []), ...(cold ? [`${f.temp}°`] : [])]
+  const severe = wind >= 18 || gust >= 30 || f.snow >= 0.2 || f.precip >= 0.25
+  const moderate = wind >= 12 || gust >= 22 || !!wet || cold
+  return {
+    text: parts.join(' · '),
+    tone: severe ? 'font-semibold text-red-700' : moderate ? 'text-amber-700' : 'text-stone-400',
+    tip: `${wx.stadium}, over the game: wind ${f.wind ?? '?'} mph, gusts ${f.gust ?? '?'} mph, ${f.precip_prob ?? '?'}% chance of precipitation `
+      + `(${f.precip}" expected${f.snow ? `, ${f.snow}" of it snow` : ''}), low of ${f.temp ?? '?'}°F. Open-Meteo forecast.`,
+  }
+}
+
+/** Weather bad enough to matter to a defence, and nothing short of it. The implied total already
+ * moves on a forecast, so ordinary wind and rain are in the number; this only flags the games
+ * where conditions take the passing game away — 20+ mph sustained, gusts of 35+, real snow or
+ * heavy rain — in case the line has not caught up yet. */
+function extremeWeather(wx: GameWeather | null): { text: string; tip: string } | null {
+  const f = wx?.roof === 'open' ? wx.forecast : null
+  if (!f) return null
+  const wind = f.wind ?? 0, gust = f.gust ?? 0
+  const flags = [
+    ...(wind >= 20 ? [`wind ${wind}`] : gust >= 35 ? [`gusts ${gust}`] : []),
+    ...(f.snow >= 0.5 ? ['snow'] : f.precip >= 0.4 ? ['heavy rain'] : []),
+  ]
+  if (!flags.length) return null
+  return {
+    text: flags.join(' · '),
+    tip: `${wx!.stadium}, over the game: wind ${f.wind ?? '?'} mph, gusts ${f.gust ?? '?'} mph, ${f.precip}" of precipitation`
+      + `${f.snow ? ` (${f.snow}" snow)` : ''}, low of ${f.temp ?? '?'}°F. Open-Meteo forecast.`,
+  }
 }
 
 /** Bands for an opponent's implied total, as a defensive matchup.
@@ -82,12 +119,16 @@ function GameCell({ g, pos, lead }: { g: Streamer['weeks'][number] | undefined; 
   // only marks the offences priced to score — the kicker table is read down its own columns.
   const b = pos === 'DEF' ? band(v) : null
   const tone = b ? BAND[b] : null
+  const kw = pos === 'K' ? kickerWeather(g.weather) : null
+  const ex = pos === 'DEF' ? extremeWeather(g.weather) : null
   return (
     <td className={`whitespace-nowrap px-2 py-1.5 text-center ${tone?.cell ?? ''} ${ring}`}>
       <div className={`text-[11px] ${tone?.opp ?? 'text-stone-600'}`}>{g.matchup}</div>
       <div className={`mt-0.5 text-[11px] tabular-nums ${tone?.num ?? (pos === 'K' && v != null && v >= 25 ? 'font-semibold text-emerald-700' : 'text-stone-400')}`}>
         {v == null ? '—' : fmt(v, 1)}
       </div>
+      {kw && <div title={kw.tip} className={`mt-0.5 text-[9.5px] leading-tight ${kw.tone}`}>{kw.text}</div>}
+      {ex && <div title={ex.tip} className="mt-1 leading-none"><span className="rounded bg-stone-800 px-1 py-0.5 text-[9px] font-bold uppercase text-white">{ex.text}</span></div>}
     </td>
   )
 }
@@ -294,19 +335,12 @@ function Matrix({ pos, rows, leagues, weeks, at, setAt, pickOf, onPick }: {
         <tbody>
           {rows.map((s) => {
             const f: TeamFactors | null = s.factors
-            const wx = k ? adverse(s.weeks[0]?.weather) : null
             // Out of reach everywhere and not yours: kept for the schedule context, but quiet.
             const shut = !s.mine && !leagues.some((lg) => lg.slots[pos] && open(s.leagues[lg.league_id]))
             return (
               <tr key={s.player_id} className={`border-t border-stone-100 ${s.mine ? 'bg-sky-50/40' : ''} ${shut ? 'opacity-45' : ''}`}>
                 <td className={`whitespace-nowrap py-1.5 pr-3 ${s.mine ? 'border-l-2 border-sky-500 pl-2.5' : 'pl-3'}`}>
-                  <span className="inline-flex items-center gap-1.5">
-                    <PlayerCell p={s} />
-                    {k && wx && (
-                      <span title="Forecast for this week's game. ESPN publishes none for later weeks, and carries no wind — the one thing that most changes a kick."
-                            className="rounded bg-amber-100 px-1 py-0.5 text-[9px] font-medium leading-none text-amber-800">{wx}</span>
-                    )}
-                  </span>
+                  <PlayerCell p={s} />
                 </td>
                 {s.weeks.map((g, n) => <GameCell key={g.week} g={g} pos={pos} lead={n === at} />)}
                 {leagues.map((lg) => (
@@ -573,10 +607,13 @@ export default function Streaming() {
             <h2 className="text-[12px] font-semibold uppercase tracking-wide text-stone-500">{tab === 'K' ? 'Every kicker' : 'Every defense'}</h2>
             <p className="text-[12px] text-stone-500">
               {tab === 'DEF'
-                ? <>Ordered by the opponent's implied total in week {weeks[week]}, lowest first — a defence scores off the other team failing. Click a week to order by it instead.</>
+                ? <>Ordered by the opponent's implied total in week {weeks[week]}, lowest first — a defence scores off the other team failing. Click a week to order by it instead.
+                  A <span className="rounded bg-stone-800 px-1 text-[10px] font-bold uppercase text-white">dark tag</span> flags extreme weather in the forecast (20+ mph wind, 35+ mph gusts, snow or heavy rain) — ordinary weather is already in the line.</>
                 : <>Ordered by the kicker's own team implied total in week {weeks[week]}, highest first — click a week to order by it instead. A kicker's points follow his offence's <em>volume</em> rather than who it is playing, so the right-hand columns describe the offence: how often it stalls in the red zone, how well it sustains drives, how often the staff takes the kick away on fourth down, and what that adds up to in attempts.
                   {games != null && <> Season to date — <span className="font-medium text-stone-600">{games} game{games === 1 ? '' : 's'}</span>, so read the rates as a first signal.</>}
-                  {' '}Limited to the kickers FantasyPros ranks this week, plus yours.</>}
+                  {' '}Limited to the kickers FantasyPros ranks this week, plus yours.
+                  {' '}Under each game: <span className="text-stone-600">⌂ dome</span> or <span className="text-stone-600">⌂ roof</span> (retractable) indoors, otherwise the forecast wind in mph, gusts, rain or snow and freezing temperatures —
+                  {' '}<span className="text-amber-700">amber</span> from 12 mph wind or 22 mph gusts, <span className="font-semibold text-red-700">red</span> from 18 mph or 30 mph gusts. Forecasts appear within a week of kickoff.</>}
               {' '}Each league column says whether he is yours (<span className="font-semibold text-sky-700">START</span> / bench), open
               (<span className="font-semibold text-emerald-700">FA</span>, or <span className="font-semibold text-amber-700">W</span> on waivers), or whose he is;
               your pick for the week is outlined in <span className="rounded bg-amber-100 px-1 font-semibold text-amber-900 ring-1 ring-amber-400">amber</span>. Rows open nowhere are faded.

@@ -50,11 +50,12 @@ def parse_league_id(league_id: str) -> tuple[str, str]:
 
 
 class Service:
-    def __init__(self, sleeper: Sleeper, espn: Espn | None = None, yahoo: Yahoo | None = None, odds=None):
+    def __init__(self, sleeper: Sleeper, espn: Espn | None = None, yahoo: Yahoo | None = None, odds=None, weather=None):
         self.s = sleeper
         self.espn = espn
         self.yahoo = yahoo
         self.odds = odds
+        self.weather = weather
         self._expert_stamp: float | None = None
         self._expert_raw: dict | None = None
         self._xw: tuple[int, Crosswalk] | None = None
@@ -797,19 +798,21 @@ class Service:
 
     async def _team_odds(self, season: str, week: int) -> dict[str, dict]:
         """team -> {implied, opp_implied, label, weather} for one week. A team missing from the
-        result has no game that week. Weather is only ever present for the current week — ESPN
-        publishes no forecast further out than a few days."""
+        result has no game that week. `weather` is the stadium's roof for every game, plus the
+        game-time forecast once kickoff is within a week (see weather.py)."""
         if not self.odds:
             return {}
         try:
             payload = await self.odds.week(int(season), week)
         except Exception:
             return {}
+        games = payload.get("games") or []
+        conditions = await self.weather.games(games) if self.weather else {}
         out: dict[str, dict] = {}
-        for g in payload.get("games") or []:
+        for g in games:
             away, home = g.get("away"), g.get("home")
             ai, hi = g.get("away_implied"), g.get("home_implied")
-            wx = g.get("weather")
+            wx = conditions.get(g.get("game_id"))
             if away:
                 out[away] = {"implied": ai, "opp_implied": hi, "label": f"@ {home}", "weather": wx}
             if home:

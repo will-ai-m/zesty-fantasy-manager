@@ -195,8 +195,24 @@ export interface StreamGame {
   matchup: string | null
   implied: number | null
   opp_implied: number | null
-  /** ESPN only forecasts a few days out, so this is present for the current week and null after. */
-  weather: { summary: string | null; temperature: number | null } | null
+  weather: GameWeather | null
+}
+
+/** Conditions at the stadium. The roof is known for every game; `forecast` is there only for an
+ * open-air game within a week of kickoff — Open-Meteo, the worst hour of the game window. */
+export interface GameWeather {
+  stadium: string
+  roof: 'dome' | 'retractable' | 'open'
+  forecast: {
+    wind: number | null
+    gust: number | null
+    precip_prob: number | null
+    /** Inches over the game window, rain and snow melted together. */
+    precip: number
+    snow: number
+    temp: number | null
+    hours: number
+  } | null
 }
 
 /** Team offensive efficiency, season to date — the context behind a kicker's implied total.

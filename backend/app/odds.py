@@ -104,11 +104,13 @@ class Odds:
                 rows.append({
                     k: row.get(k) for k in (
                         "season", "week", "away_team", "home_team", "gameday", "gametime",
-                        "spread_line", "total_line", "away_moneyline", "home_moneyline",
+                        "spread_line", "total_line", "away_moneyline", "home_moneyline", "stadium_id",
                     )
                 })
             return rows
-        return await self.cache.get("nflverse_games", DAY, loader, disk=True)
+        # Versioned key: the on-disk copy keeps only the columns listed above, so adding one
+        # needs a fresh download rather than a day of rows without it.
+        return await self.cache.get("nflverse_games_v2", DAY, loader, disk=True)
 
     async def _nflverse_week(self, season: int, week: int) -> dict[tuple[str, str], dict]:
         rows = await self._nflverse()
@@ -209,6 +211,7 @@ class Odds:
             "odds_provider": None,
             "odds_source": "nflverse" if total is not None else None,
             "venue": None, "broadcast": None, "weather": None,
+            "stadium_id": row.get("stadium_id") or None,
         }
 
     # ---- public -----------------------------------------------------------
@@ -230,6 +233,9 @@ class Odds:
         if games:
             for g in games:
                 row = fallback.get((g["away"], g["home"])) if fallback else None
+                # nflverse is the only source that places a game at a stadium id, which is what
+                # the weather lookup keys on — ESPN gives a venue name, and it varies.
+                g["stadium_id"] = (row or {}).get("stadium_id") or None
                 if not row:
                     continue
                 filled = self._from_nflverse(row, g["away"], g["home"], season, week)
