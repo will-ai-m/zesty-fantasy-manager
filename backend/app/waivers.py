@@ -1,23 +1,11 @@
-"""Waiver-wire decisions: three separate reads on the free-agent pool, plus weekly K/D-ST streamers.
+"""Waiver-wire decisions: the ranked waiver list read against the field, plus weekly K/D-ST streamers.
 
-The pool is deliberately *not* collapsed into one ranking. Blending expert consensus, scoring and
-usage into a single number buries the disagreements, and the disagreements are the interesting
-part — a player the experts like who saw no snaps is a different proposition from one who led his
-team in targets but nobody has ranked yet. So each signal gets its own ordered list and you read
-them against each other:
-
-  by_fantasypros  their waiver shortlist, in their order — the forward-looking expert view.
-  by_production   what happened on the field last week: points first, then volume, then snap
-                  share, each as the tie-break on the one before it.
-
-Production reads down that order because the three answer progressively softer questions. Points
-are the result and settle it outright where they differ. They rarely tie above zero — but a large
-part of any waiver pool scored nothing at all, and that is exactly where the other two earn their
-place: among players who put up nothing, the one who ran a route on 80% of the snaps and saw six
-targets is a different proposition from the one who took two snaps. Volume is the touch that
-defines the role — targets for a receiver or tight end, carries *and* targets for a back, since a
-back who catches is being used either way — and snap share is the last word on whether the staff
-put him on the field.
+The waiver list is FantasyPros' shortlist, in their order — the forward-looking expert view — and
+each row carries what the player actually did last week beside it: points, then the volume and snap
+share that say whether the role is real. They sit side by side rather than blended into one number,
+because the disagreements are the interesting part: a player the experts like who saw no snaps is
+a different proposition from one who led his team in targets. Volume is the touch that defines the
+role — targets for a receiver or tight end, carries *and* targets for a back.
 
 **Streamers** are a different question entirely. K and D/ST are matchup plays with almost no
 week-to-week carryover, so the matchup carries most of the weight: a defence is good this week if
@@ -26,51 +14,12 @@ score a lot, both read off Vegas implied totals.
 
 FantasyPros' K and D/ST rankings sit in their own columns rather than being folded into that
 number — the weekly rank and the rest-of-season rank both, since "best this Sunday" and "worth
-holding" are different questions and the gap between them is the interesting part. Neither
-touches the ordering, which is Vegas alone.
+holding" are different questions and the gap between them is the interesting part.
 
 Each row runs the next four weeks of matchups across it, because the good matchup three weeks
 out is claimed by whoever looks that far ahead.
 """
 from __future__ import annotations
-
-from typing import Any
-
-# The touches that define a role at each position. A back's receiving work counts towards his
-# volume as much as his carries do; a receiver has only the one kind of touch.
-VOLUME_STATS = {"WR": ("lw_targets",), "TE": ("lw_targets",), "RB": ("lw_carries", "lw_targets")}
-
-
-def volume(row: dict) -> float | None:
-    """Last week's defining touches: targets for a receiver or tight end, carries plus targets
-    for a back. None when the position has no such touch, or when none were recorded."""
-    stats = VOLUME_STATS.get(row.get("position") or "")
-    if not stats:
-        return None
-    counts = [row.get(k) for k in stats]
-    return float(sum(c for c in counts if c)) if any(c is not None for c in counts) else None
-
-
-def rank_by_production(rows: list[dict]) -> list[dict]:
-    """Order by last week's points, breaking ties on volume and then on snap share.
-
-    Strictly in that order rather than blended into a score. Points are the outcome and outrank
-    the inputs wherever they separate two players at all; volume and snap share decide the rest,
-    which in a waiver pool is most of it, since so much of the pool scored nothing. Reading them
-    as a fixed order rather than a weighted sum keeps every row explicable from the columns on
-    screen — you can see which number put a player where he is.
-
-    Players with nothing recorded at all last week are dropped; there is no reading to give.
-    """
-    out = []
-    for r in rows:
-        vol = volume(r)
-        if r.get("last_week_pts") is None and vol is None and r.get("lw_snap_pct") is None:
-            continue
-        out.append({**r, "lw_volume": vol})
-    out.sort(key=lambda r: (-(r.get("last_week_pts") or 0.0), -(r["lw_volume"] or 0.0),
-                            -(r.get("lw_snap_pct") or 0.0)))
-    return out
 
 
 # --------------------------------------------------------------------------- expert columns

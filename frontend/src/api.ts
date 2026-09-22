@@ -55,6 +55,8 @@ export interface Player extends Usage {
   proj_ros: number | null
   proj_week_rank?: string | null
   proj_ros_rank?: string | null
+  /** Places above the player of yours he would replace, on FantasyPros' rest-of-season overall
+   * ranking. Positive is an upgrade. Null when FantasyPros does not rank him. */
   vs_mine?: number | null
   platform_status?: 'FREEAGENT' | 'WAIVERS' | 'ONTEAM' | null
   waiver_until?: number | null
@@ -74,7 +76,10 @@ export interface Player extends Usage {
   /** Place on the FantasyPros waiver-wire shortlist (~50 players league-wide). */
   fp_waiver_rank?: number | null
   fp_waiver_pos_rank?: string | null
+  /** FantasyPros rest-of-season rank within position, e.g. "WR11" — what the app calls ROS. */
   fp_ros_pos_rank?: string | null
+  /** The same list's overall place, which ranks across positions. */
+  fp_ros_ecr?: number | null
 }
 
 export type Platform = 'sleeper' | 'espn' | 'yahoo'
@@ -138,6 +143,8 @@ export interface Usage {
   lw_carries?: number | null
   lw_rec?: number | null
   lw_rz?: number | null
+  /** Last week's points in standard half-PPR — the one scale the cross-league waiver list reads in. */
+  lw_pts_half?: number | null
   lw_volume?: number | null
 }
 
@@ -162,20 +169,24 @@ export interface ArticleList { label: string; action: 'stash' | 'drop'; names: s
 
 export interface ArticleDigest { week: number; sources: ArticleSource[]; items: ArticleItem[]; lists: ArticleList[] }
 
-/** A free agent in one of the three ranked panels. `usage_score` is only set in the usage
- * panel, where it is the blend of snap-share and volume rank that orders it. */
+/** A player on the waiver list or a trends list, with where he stands in each of your leagues. */
 export interface Target extends Player {
-  /** Usage panel only: volume rank within position, the tie-break behind snap share. */
-  volume_rank?: number
   /** Yahoo only, from its Transaction Trends page: adds and drops across all Yahoo leagues. */
   adds?: number | null
   drops?: number | null
   trades?: number | null
   rank_preseason?: number | null
   rank_actual?: number | null
+  leagues: Record<string, WaiverStanding>
 }
 
-/** Which movement signal this platform publishes, and how to label it. */
+/** Where a waiver target stands in one league. An open one carries "vs mine" for that league —
+ * places above the player of yours he would replace — and your pending claim on him, if any. */
+export type WaiverStanding =
+  | { status: 'mine'; role: string }
+  | { status: 'taken'; owner: string }
+  | { status: 'free' | 'waivers'; until?: number | null; vs_mine: number | null; claimed?: boolean; bid?: number | null }
+
 /** A waiver claim you have submitted that has not processed yet. Always your own — every
  * platform keeps claims private until they run. */
 export interface PendingClaim {
@@ -187,7 +198,9 @@ export interface PendingClaim {
   drop_player_id: string | null
 }
 
-export interface Movement { kind: 'sleeper' | 'espn' | 'yahoo'; label: string; blurb: string }
+/** One platform's read on who is moving. Each platform publishes a different measure, so each is
+ * its own list rather than one blended one. */
+export interface Trend { kind: Platform; label: string; blurb: string; rows: Target[]; error?: string }
 
 /** One week of a streamer's schedule. `matchup` is null when the team has no game — a bye. */
 export interface StreamGame {
@@ -285,19 +298,51 @@ export interface StreamingResponse {
   K: Streamer[]
 }
 
+/** One of your own players on the waiver page: where he sits in your lineup, and whether he is the
+ * player the "vs mine" column measures free agents against. */
+export interface RosterPlayer extends Player {
+  /** Starting slot (QB, RB, FLEX…), or BN / IR / TAXI. */
+  slot: string
+  vs_mine_bar: boolean
+}
+
+/** The room on a roster: open spots (starting slots plus bench, less everyone not on IR or taxi),
+ * starting slots nobody is in, and IR and taxi slots used of available. */
+export interface RosterSpots {
+  open: number
+  empty_starts: string[]
+  ir: { slots: number; used: number }
+  taxi: { slots: number; used: number }
+}
+
+/** One of your leagues as the waiver page needs it. `roster` is your QBs, RBs, WRs and TEs — K and
+ * D/ST belong to the streaming page, though they count towards `spots`. */
+export interface WaiverLeague {
+  league_id: string
+  name: string
+  platform: Platform
+  waiver: LeagueSummary['waiver']
+  my_team: LeagueSummary['my_team']
+  roster: RosterPlayer[]
+  spots: RosterSpots
+  pending: PendingClaim[]
+}
+
+/** The waiver wire across every league: FantasyPros' list in its order, the trends, your rosters. */
+export interface WaiverBoard {
+  week: number
+  leagues: WaiverLeague[]
+  fantasypros: Target[]
+  fantasypros_meta: { experts: number | null; updated: string | null; week: number | null }
+  trends: Trend[]
+  articles: ArticleDigest | null
+}
+
+/** Every free agent in one league, for the Browse tab. */
 export interface WaiversResponse {
   league: LeagueSummary
   week: number
   ros_end_week: number
-  by_fantasypros: Target[]
-  /** Last week on the field: points, then volume, then snap share as successive tie-breaks. */
-  by_production: Target[]
-  /** Sleeper's league-wide add/drop counts. Null for ESPN and Yahoo leagues, whose managers
-   * are a different population than the one these counts describe. */
-  by_trending: Target[] | null
-  movement: Movement | null
-  pending: PendingClaim[]
-  articles: ArticleDigest | null
   players: Player[]
 }
 
@@ -432,6 +477,7 @@ export interface GamesResponse {
 export const api = {
   me: () => http<Me>('/api/me'),
   waivers: (leagueId: string, week?: number) => http<WaiversResponse>(`/api/leagues/${leagueId}/waivers${q({ week })}`),
+  waiverBoard: (week?: number) => http<WaiverBoard>(`/api/waivers${q({ week })}`),
   streaming: (week?: number) => http<StreamingResponse>(`/api/streaming${q({ week })}`),
   streamPicks: () => http<StreamPick[]>('/api/stream-picks'),
   setStreamPick: (body: PickKey & { player_id: string }) => http<StreamPick[]>('/api/stream-picks', { method: 'PUT', body: JSON.stringify(body) }),

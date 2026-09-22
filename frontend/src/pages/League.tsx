@@ -5,12 +5,12 @@ import { fmt, gameDayRowClass, pct, POS_ORDER, shortDate, timeAgo } from '../lib
 import { useApp } from '../components/AppContext'
 import { Chip, ErrorBox, LeagueBar, LeagueDot, PlatformBadge, PlayerCell, Pos, Spinner } from '../components/Badges'
 import { DataTable, type Column } from '../components/DataTable'
-import { playerColumns } from './Waivers'
+import { playerColumns, rosColumn } from './Waivers'
 
 type SlotRow = { slot: string; player: Player | null; key: string }
 
-function slotColumns(week: number, rosEnd: number): Column<SlotRow>[] {
-  const base = playerColumns({ week, rosEnd, fp: true, owned: true, livePts: true, variant: 'lineup' })
+function slotColumns(week: number): Column<SlotRow>[] {
+  const base = playerColumns({ week, fp: true, owned: true, livePts: true, variant: 'lineup' })
   const wrapped: Column<SlotRow>[] = base.map((c) => ({
     ...c,
     render: (r) => (r.player ? c.render(r.player) : c.key === 'name' ? <span className="text-red-600">Empty</span> : null),
@@ -33,8 +33,8 @@ function TeamHeader({ r }: { r: RosterView }) {
   )
 }
 
-export function RosterDetail({ r, week, rosEnd }: { r: RosterView; week: number; rosEnd: number }) {
-  const cols = useMemo(() => slotColumns(week, rosEnd), [week, rosEnd])
+export function RosterDetail({ r, week }: { r: RosterView; week: number }) {
+  const cols = useMemo(() => slotColumns(week), [week])
   const starters: SlotRow[] = r.starters.map((s, i) => ({ slot: s.slot, player: s.player, key: `${s.slot}-${i}` }))
   const bench: SlotRow[] = r.bench.map((p) => ({ slot: 'BN', player: p, key: p.player_id }))
   const reserve: SlotRow[] = r.reserve.map((p) => ({ slot: 'IR', player: p, key: p.player_id }))
@@ -95,7 +95,7 @@ function AllMyPlayers() {
         sort: (p) => Number((p.fp_pos_rank ?? '').replace(/\D/g, '')) || 9999, align: 'right',
       },
       { key: 'drops', header: '−24h', title: 'Drops across Sleeper, last 24h', render: (p) => <span className={p.drops_24h ? 'text-red-700' : 'text-stone-400'}>{p.drops_24h || '·'}</span>, sort: (p) => p.drops_24h, align: 'right', desc: true },
-      { key: 'ros', header: 'ROS', render: (p) => <span className="font-medium">{fmt(p.proj_ros, 0)}</span>, sort: (p) => p.proj_ros, align: 'right', desc: true },
+      rosColumn as Column<MyPlayer>,
       { key: 'n', header: 'Leagues', render: (p) => p.leagues.length, sort: (p) => p.leagues.length, align: 'center', desc: true },
     ]
     for (const lg of data?.leagues ?? []) {
@@ -197,7 +197,7 @@ export default function League() {
             <section>
               <h2 className={h2}>Your team · week {week}</h2>
               {mine
-                ? <RosterDetail r={mine} week={week} rosEnd={league.ros_end_week} />
+                ? <RosterDetail r={mine} week={week} />
                 : <div className="text-[12px] text-stone-500">You do not have a roster in this league.</div>}
             </section>
           )}
@@ -230,7 +230,7 @@ export default function League() {
                         {open === r.roster_id && !r.is_mine && (
                           <tr>
                             <td colSpan={10} className="bg-stone-50 p-3">
-                              <RosterDetail r={r} week={week} rosEnd={league.ros_end_week} />
+                              <RosterDetail r={r} week={week} />
                             </td>
                           </tr>
                         )}

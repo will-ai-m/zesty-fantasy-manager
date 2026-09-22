@@ -6,12 +6,13 @@ leagues and lets you pick your streamers; you make the actual moves on the platf
 
 ## What it does
 
-- **Waivers** — every free agent in a league with Sleeper-wide % rostered / % started, adds and drops
-  (24h / 7d), this-week and next-week projections and rest-of-season projections under *that league's*
-  scoring, position ranks, last season PPG, depth chart, opponent and bye. The **vs mine** column is the
-  rest-of-season gap to the weakest player you roster at that position, so upgrades sort to the top.
-- **Trends** — Sleeper's top-100 adds/drops with, for each of your leagues, whether the player is free,
-  yours, or owned (by whom), plus projections under that league's scoring.
+- **Waivers** — the waiver wire across every league at once. FantasyPros' waiver list is the spine, in
+  their order; each player carries what he did last week (half-PPR points, snap share, targets, carries),
+  his FantasyPros rest-of-season rank, and a column per league saying where he is open and how many places
+  he sits above the player of yours he would replace (**vs mine**). The same columns run under each
+  platform's trends list (Sleeper adds/drops, ESPN ownership change, Yahoo transaction trends). Beside it,
+  your roster in any league — with open spots, empty starting slots and IR — and your pending claims.
+  **Browse all** is the full free-agent pool of the league picked in the sidebar.
 - **Streaming** — every K and D/ST with the next four weeks of Vegas lines, and where each one is yours,
   open or taken in every league at once. Click one to make it your pick for a league and week; the picks
   board says what each still takes (add, claim, start) and ticks itself off once it is in your lineup.

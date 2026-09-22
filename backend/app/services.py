@@ -87,6 +87,9 @@ class Service:
             "fp_waiver_rank": waiver.get("rank_ecr"),
             "fp_waiver_pos_rank": waiver.get("pos_rank"),
             "fp_ros_pos_rank": ros_.get("pos_rank"),
+            # Overall place on the same rest-of-season list: what ranks across positions, so a
+            # receiver and a back can be compared on one scale.
+            "fp_ros_ecr": ros_.get("rank_ecr"),
         }
 
     def _fp_detail(self, pid: str, position: str | None) -> dict | None:
@@ -337,6 +340,8 @@ class Service:
             # receiver, carries for a back, attempts for a quarterback), so all three are kept.
             row["lw_pass_att"] = int(st["pass_att"]) if st.get("pass_att") else None
             row["lw_volume"] = ((int(tgt) if tgt else 0) + (int(car) if car else 0)) or row["lw_pass_att"]
+            # Standard half-PPR, the one scale the cross-league waiver list reads in.
+            row["lw_pts_half"] = round(float(st["pts_half_ppr"]), 1) if st.get("pts_half_ppr") is not None else None
             out[pid] = row
         return out
 
@@ -708,7 +713,7 @@ class Service:
         return out
 
     # ------------------------------------------------------------------ views
-    async def _espn_movers(self, b: dict, ctx: dict, week: int, rostered: dict) -> list[dict]:
+    async def _espn_movers(self, b: dict, ctx: dict, week: int) -> list[dict]:
         """ESPN's biggest ownership swings, fetched sorted by change rather than filtered out of
         the ownership-sorted pool — the players being added hardest are usually the ones that pool
         cuts off."""
@@ -723,7 +728,7 @@ class Service:
         info, _ = espn_normalize_pool(raw, season, week, xw, pro_teams)
         out = []
         for pid, i in info.items():
-            if pid in rostered or i.get("owned_change") in (None, 0):
+            if i.get("owned_change") in (None, 0):
                 continue
             row = self._enrich(ctx, pid)
             if not row or row["position"] in ("K", "DEF"):
@@ -732,12 +737,13 @@ class Service:
         out.sort(key=lambda r: -(r["owned_change"] or 0))
         return out
 
-    async def _yahoo_movers(self, b: dict, pool: list[dict]) -> list[dict]:
-        """Yahoo's Transaction Trends counts, joined onto the pool rows we already have."""
+    async def _yahoo_movers(self, b: dict, ctx: dict) -> list[dict]:
+        """Yahoo's Transaction Trends counts, on the players they name."""
         assert self.yahoo is not None
         raw, xw = await asyncio.gather(self.yahoo.buzz(b["league"]["platform_league_id"]), self._crosswalk())
         counts = yahoo_normalize_buzz(raw, xw)
-        out = [{**r, **counts[r["player_id"]]} for r in pool if r["player_id"] in counts]
+        out = [{**r, **c} for pid, c in counts.items()
+               if (r := self._enrich(ctx, pid)) and r["position"] in ("QB", "RB", "WR", "TE")]
         out.sort(key=lambda r: -(r.get("adds") or 0))
         return out
 
@@ -819,86 +825,195 @@ class Service:
                 out[home] = {"implied": hi, "opp_implied": ai, "label": f"vs {away}", "weather": wx}
         return out
 
-    async def waivers(self, league_id: str, week: int | None) -> dict:
-        """Several reads on the pool, not one ranking.
+    def _ros_place(self, r: dict | None) -> int:
+        """A player's place on FantasyPros' rest-of-season overall list. Anyone it does not rank
+        counts as one place below the bottom, so an unranked player compares as the worst there is."""
+        _, idx = self._fp()
+        return (r or {}).get("fp_ros_ecr") or len(idx.get("ros") or {}) + 1
 
-        The claimable pool is ordered three separate ways — by FantasyPros' waiver shortlist, by
-        what players actually scored last week, and by the snap share and volume that lead
-        scoring — so that where those disagree stays visible instead of averaging out.
-        K and D/ST are left out: they are matchup plays rather than assets, and `streaming`
-        handles them across every league at once.
+    def _vs_mine(self, bars: dict[str, dict | None], r: dict) -> int | None:
+        """Places a free agent sits above the player of mine he would replace (see `_my_side`)."""
+        w = bars.get(r["position"])
+        return self._ros_place(w) - r["fp_ros_ecr"] if w and r.get("fp_ros_ecr") else None
+
+    def _my_side(self, b: dict, ctx: dict) -> dict:
+        """My roster in one league as the waiver page reads it: my QBs, backs and receivers, the
+        player each position's claims would be made over, and how much room there is.
+
+        "vs mine" is how many places a free agent sits above the player of mine he would replace,
+        on FantasyPros' rest-of-season overall ranking — positive for an upgrade. That player is
+        the worse of two: my weakest at his own position, and — for RB/WR/TE — my weakest RB/WR/TE
+        beyond the starters my lineup requires at each position, since a FLEX swap can take a
+        spare back for a receiver but never the only tight end. The overall list rather than the
+        positional one because only it puts a back and a receiver on one scale. IR and taxi
+        players are left out: they hold no bench spot, so a claim never has to be made over one.
+
+        `spots` is the room: open roster spots (starting slots plus bench, less everyone not on
+        IR or taxi), starting slots with nobody in them, and IR and taxi slots used of available.
         """
+        my_roster = b["my_roster"] or {}
+        players = my_roster.get("players") or []
+        reserve, taxi = my_roster.get("reserve") or [], my_roster.get("taxi") or []
+        stashed = set(reserve) | set(taxi)
+        rows = {pid: r for pid in dict.fromkeys(players + reserve + taxi) if (r := self._enrich(ctx, pid))}
+        mine = [r for pid, r in rows.items() if pid not in stashed and r["position"] in FANTASY_POSITIONS]
+
+        flex = {"RB", "WR", "TE"}
+        positions = b["league"].get("roster_positions") or []
+        by_pos = {pos: sorted((r for r in mine if r["position"] == pos), key=self._ros_place) for pos in FANTASY_POSITIONS}
+        spare = [r for pos in flex for r in by_pos[pos][positions.count(pos):]]
+        flex_bar = max(spare, key=self._ros_place) if spare else None
+
+        def bar_for(pos: str) -> dict | None:
+            own = by_pos[pos][-1] if by_pos[pos] else None
+            options = [c for c in (own, flex_bar if pos in flex else None) if c]
+            return max(options, key=self._ros_place) if options else None
+        bars = {pos: bar_for(pos) for pos in FANTASY_POSITIONS}
+        # "weakest" on the roster card — except a player who is only the bar for being the one
+        # man at his position, where the word would say nothing.
+        marked = {w["player_id"] for pos, w in bars.items()
+                  if w and pos not in ("K", "DEF") and (w is flex_bar or len(by_pos[w["position"]]) > 1)}
+        roles = self._roles(b)
+        roster = [{**r, "slot": roles.get(pid, "BN"), "vs_mine_bar": pid in marked}
+                  for pid, r in rows.items() if r["position"] in FANTASY_POSITIONS and r["position"] not in ("K", "DEF")]
+
+        starting = starting_slots(positions)
+        starters = my_roster.get("starters") or []
+        settings = b["league"].get("settings") or {}
+        active = [pid for pid in players if pid not in stashed]
+        spots = {
+            "open": max(0, len(starting) + positions.count("BN") - len(active)),
+            "empty_starts": [slot for i, slot in enumerate(starting) if i >= len(starters) or starters[i] in (None, "", "0")],
+            "ir": {"slots": int(settings.get("reserve_slots") or 0), "used": len(reserve)},
+            "taxi": {"slots": int(settings.get("taxi_slots") or 0), "used": len(taxi)},
+        }
+        return {"bars": bars, "roster": roster, "spots": spots}
+
+    async def waivers(self, league_id: str, week: int | None) -> dict:
+        """Every free agent in one league, for the Browse tab: the whole pool on this league's
+        projections, with "vs mine" measured against my roster here. The ranked waiver list, the
+        trends and the rosters are cross-league and come from `waiver_board`."""
         b = await self._league_bundle(league_id)
         week = week or self._claim_week(await self.state())
         ctx = await self._week_context(b, week)
         rostered = self._rostered(b)
         rows = [r for r in (self._enrich(ctx, pid) for pid in self._pool_ids(ctx)) if r and r["position"] in FANTASY_POSITIONS]
         self._rank_by_position(rows, "proj_week", "proj_week_rank")
-        self._rank_by_position(rows, "proj_ros", "proj_ros_rank")
         free = [r for r in rows if r["player_id"] not in rostered]
-
-        # "vs mine": how much better (rest of season) than the weakest player I roster at that
-        # position. FLEX-eligible positions compare against my weakest RB/WR/TE so a WR can show
-        # as an upgrade over a bad RB.
-        my_ids = set((b["my_roster"] or {}).get("players") or [])
-        mine = [r for r in rows if r["player_id"] in my_ids]
-        flex = {"RB", "WR", "TE"}
-
-        def weakest(pos: str) -> float | None:
-            group = [r for r in mine if (r["position"] in flex if pos in flex else r["position"] == pos)]
-            vals = [r.get("proj_ros") or 0.0 for r in group]
-            return min(vals) if vals else None
-        weakest_by_pos = {pos: weakest(pos) for pos in FANTASY_POSITIONS}
+        bars = self._my_side(b, ctx)["bars"]
         for r in free:
-            base = weakest_by_pos.get(r["position"])
-            r["vs_mine"] = round((r.get("proj_ros") or 0.0) - base, 1) if base is not None and r.get("proj_ros") is not None else None
+            r["vs_mine"] = self._vs_mine(bars, r)
+        return {"league": self._league_summary(b), "week": week, "ros_end_week": ctx["ros_end_week"], "players": free}
 
-        season = str(b["league"]["season"])
-        lg = self._league_summary(b)
+    MOVEMENT = {
+        "sleeper": ("Sleeper adds and drops",
+                    "What every Sleeper manager is doing right now, across all Sleeper leagues. The fastest signal here and the noisiest — it moves on news before the box score does, and just as hard on hype."),
+        "espn": ("ESPN most added",
+                 "ESPN publishes no add counts, only the shift in how many ESPN teams roster a player — so this is that shift, which is what drives its own most-added list. Sort ascending for the drops."),
+        "yahoo": ("Yahoo transaction trends", "Yahoo's own count of adds and drops across every Yahoo league, from its Transaction Trends page."),
+    }
 
-        # Two reads on the same pool rather than one blended ranking: the expert shortlist, which
-        # looks forward, and what actually happened on the field last week, which looks back.
-        # Kept separate so the places they disagree stay visible. K and D/ST belong to the
-        # streamers below.
-        pool = [r for r in free if r["position"] not in ("K", "DEF")]
-        by_fantasypros = sorted(
-            [r for r in pool if r.get("fp_waiver_rank")], key=lambda r: r["fp_waiver_rank"])
-        by_production = wv.rank_by_production(pool)
-        # Each platform publishes its own read on which way a player is moving, and each means
-        # something different, so the panel is labelled per platform rather than pretending they
-        # are one metric: Sleeper counts adds and drops league-wide, ESPN gives the change in the
-        # percentage of teams rostering a player, and Yahoo gives the gap between where it ranked
-        # him before the season and where he sits now.
-        platform = lg.get("platform")
-        if platform == "sleeper":
-            movers = sorted([r for r in pool if (r.get("adds_24h") or 0) > 0 or (r.get("drops_24h") or 0) > 0],
-                            key=lambda r: -(r.get("adds_24h") or 0))
-            movement = {"kind": "sleeper", "label": "Sleeper adds and drops",
-                        "blurb": "What every Sleeper manager is doing right now, league-wide. The fastest signal here and the noisiest — it moves on news before the box score does, and just as hard on hype."}
-        elif platform == "espn":
-            movers = await self._espn_movers(b, ctx, week, rostered)
-            movement = {"kind": "espn", "label": "ESPN most added and dropped",
-                        "blurb": "ESPN publishes no add counts, only the shift in how many teams roster a player — so this is that shift, which is what drives its own most-added list. Sort ascending for the drops."}
-        elif platform == "yahoo":
-            movers = await self._yahoo_movers(b, pool)
-            movement = {"kind": "yahoo", "label": "Yahoo transaction trends",
-                        "blurb": "Yahoo's own count of adds and drops across every Yahoo league, from its Transaction Trends page."}
-        else:
-            movers, movement = [], None
-        by_trending = movers if movement else None
+    async def waiver_board(self, week: int | None) -> dict:
+        """The waiver wire across every league at once.
+
+        FantasyPros' waiver list is the spine: its players in its order, each carrying what he did
+        on the field last week — points, snap share, targets and carries — and where he stands in
+        each of my leagues, so one row says both whether he is worth a claim and where I can still
+        make it. The trends lists (one per platform, since each publishes a different measure) get
+        the same league columns. K and D/ST are left to the streaming page.
+
+        Last week's points are standard half-PPR, one scale for every league: all of these leagues
+        score half-PPR, and so does the FantasyPros list the rows come from.
+        """
+        me = await self.me()
+        st = me["state"]
+        week = week or self._claim_week(st)
+        season = str(st["season"])
+        bundles = await self._all_bundles(me)
+        ctxs, pendings = await asyncio.gather(
+            asyncio.gather(*(self._week_context(b, week) for b in bundles)),
+            asyncio.gather(*(self._pending_claims(b, week) for b in bundles)),
+        )
+
+        per: dict[str, dict] = {}
+        leagues = []
+        for b, ctx, pending in zip(bundles, ctxs, pendings):
+            lid = b["league"]["league_id"]
+            side = self._my_side(b, ctx)
+            per[lid] = {"b": b, "ctx": ctx, "rostered": self._rostered(b), "roles": self._roles(b), "bars": side["bars"],
+                        "claims": {c["player_id"]: c.get("bid") for c in pending if c.get("player_id")}}
+            summary = self._league_summary(b)
+            leagues.append({
+                "league_id": lid, "name": summary["name"], "platform": summary["platform"],
+                "waiver": summary["waiver"], "my_team": summary["my_team"],
+                "roster": side["roster"], "spots": side["spots"], "pending": pending,
+            })
+
+        # Enriched from the first league that knows the player, Sleeper leagues first: nothing on
+        # these rows is league-scored except what goes into each league's column.
+        ordered = sorted(zip(bundles, ctxs), key=lambda bc: bc[0]["league"].get("platform") != "sleeper")
+
+        def row_for(pid: str) -> dict | None:
+            for _, ctx in ordered:
+                if pid in ctx["players"] and (r := self._enrich(ctx, pid)):
+                    return r
+            return None
+
+        def with_standing(r: dict) -> dict:
+            standing = {}
+            for lid, L in per.items():
+                sd = self._availability(L["b"], L["ctx"], L["rostered"], L["roles"], r["player_id"])
+                if sd["status"] in ("free", "waivers"):
+                    sd["vs_mine"] = self._vs_mine(L["bars"], r)
+                    if r["player_id"] in L["claims"]:
+                        sd["claimed"] = True
+                        sd["bid"] = L["claims"][r["player_id"]]
+                standing[lid] = sd
+            return {**r, "leagues": standing}
+
+        fp_data, fp_idx = self._fp()
+        fp_rows = []
+        for pid, row in sorted((fp_idx.get("waiver") or {}).items(), key=lambda kv: kv[1].get("rank_ecr") or 999):
+            if row.get("position") in ("K", "DEF"):
+                continue
+            if r := row_for(pid):
+                fp_rows.append(with_standing(r))
+        page = (((fp_data or {}).get("sets") or {}).get("waiver") or {}).get("pages", {}).get("overall") or {}
+
+        trends = []
+        for b, ctx in ordered:
+            kind = b["league"].get("platform", "sleeper")
+            if kind in {t["kind"] for t in trends} or kind not in self.MOVEMENT:
+                continue
+            label, blurb = self.MOVEMENT[kind]
+            try:
+                movers = await self._movers(kind, b, ctx, week)
+                trends.append({"kind": kind, "label": label, "blurb": blurb, "rows": [with_standing(r) for r in movers[:50]]})
+            except Exception as e:  # one platform's trends failing should never take the page with it
+                trends.append({"kind": kind, "label": label, "blurb": blurb, "rows": [], "error": str(e)})
 
         return {
-            "league": lg,
             "week": week,
-            "ros_end_week": ctx["ros_end_week"],
-            "by_fantasypros": by_fantasypros[:40],
-            "by_production": by_production[:150],
-            "by_trending": by_trending[:40] if by_trending is not None else None,
-            "movement": movement,
-            "pending": await self._pending_claims(b, week),
+            "leagues": leagues,
+            "fantasypros": fp_rows,
+            "fantasypros_meta": {"experts": page.get("experts"), "updated": page.get("last_updated"),
+                                 "week": ((fp_data or {}).get("sets", {}).get("waiver") or {}).get("week")},
+            "trends": trends,
             "articles": self._articles(season, week),
-            "players": free,
         }
+
+    async def _movers(self, kind: str, b: dict, ctx: dict, week: int) -> list[dict]:
+        """Who is moving on one platform, QB/RB/WR/TE, most added first. Every player the platform
+        reports, not just the ones free in this league — the league columns say where each is open."""
+        if kind == "espn":
+            return await self._espn_movers(b, ctx, week)
+        if kind == "yahoo":
+            return await self._yahoo_movers(b, ctx)
+        t = ctx["trending"]
+        rows = [r for r in (self._enrich(ctx, pid) for pid in set(t["adds_24h"]) | set(t["drops_24h"]))
+                if r and r["position"] in ("QB", "RB", "WR", "TE")]
+        rows.sort(key=lambda r: (-(r.get("adds_24h") or 0), -(r.get("drops_24h") or 0)))
+        return rows
 
     @staticmethod
     def _claim_week(st: dict) -> int:

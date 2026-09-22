@@ -1,9 +1,9 @@
-import { useMemo, useState, type ReactNode } from 'react'
+import { useEffect, useMemo, useState, type ReactNode } from 'react'
 import { useQuery } from '@tanstack/react-query'
-import { api, type ArticleDigest, type ArticleItem, type Movement, type PendingClaim, type Player, type Target } from '../api'
+import { api, type ArticleDigest, type ArticleItem, type Platform, type Player, type Target, type WaiverLeague, type WaiverStanding } from '../api'
 import { fmt, fmtInt, gameDayRowClass, OUT_STATUSES, pct, POS_ORDER, shortDate } from '../lib/format'
 import { useApp } from '../components/AppContext'
-import { Chip, ErrorBox, LeagueBar, PlatformBadge, PlayerCell, Pos, Spinner } from '../components/Badges'
+import { ErrorBox, LeagueBar, PlatformBadge, PlayerCell, Pos, Spinner } from '../components/Badges'
 import { DataTable, type Column } from '../components/DataTable'
 
 /** "WR24" -> 24, for sorting; unranked players sink to the bottom. */
@@ -48,7 +48,17 @@ function usageColumns(lastWeek: number): Column<Player>[] {
  * `lineup` is "should I start this" — they are already mine, so the market says nothing.
  * Backward-looking scoring (last week, PPG, last season) lives in the player drawer, which
  * carries the full per-week game log for both seasons. */
-export function playerColumns(opts: { week: number; rosEnd: number; showRank?: boolean; vsMine?: boolean; espn?: boolean; fp?: boolean; fpWaiver?: boolean; usage?: number; owned?: boolean; livePts?: boolean; variant?: 'waiver' | 'lineup' }): Column<Player>[] {
+/** ROS everywhere in the app is FantasyPros' rest-of-season rank within position ("WR11"), not a
+ * points projection. Sorted by the same list's overall place so a mixed table orders across
+ * positions; players FantasyPros does not rank sort last. */
+export const rosColumn: Column<Player> = {
+  key: 'fp_ros', header: 'ROS',
+  title: "FantasyPros rest-of-season rank within position (half PPR). Sorts by their overall rank, so mixed positions order across each other.",
+  render: (p) => p.fp_ros_pos_rank ? <span className="font-medium">{p.fp_ros_pos_rank}</span> : <span className="text-stone-300">·</span>,
+  sort: (p) => p.fp_ros_ecr ?? 9999, align: 'right',
+}
+
+export function playerColumns(opts: { week: number; showRank?: boolean; vsMine?: boolean; espn?: boolean; fp?: boolean; fpWaiver?: boolean; usage?: number; owned?: boolean; livePts?: boolean; variant?: 'waiver' | 'lineup' }): Column<Player>[] {
   // The market view is the waiver default, but a lineup can ask for ownership explicitly — on
   // your own roster it is not "should I add him" but "is the rest of the world starting him".
   const market = opts.owned ?? (opts.variant ?? 'waiver') === 'waiver'
@@ -121,147 +131,154 @@ export function playerColumns(opts: { week: number; rosEnd: number; showRank?: b
       sort: (p) => p.proj_week, align: 'right', desc: true,
     },
     { key: 'proj_next', header: `Wk ${opts.week + 1} proj`, title: opts.espn ? "Sleeper's projection for next week, scored with this league's settings (ESPN only publishes the current week)" : 'Projected points next week', render: (p) => fmt(p.proj_next), sort: (p) => p.proj_next, align: 'right', desc: true },
-    {
-      key: 'proj_ros', header: 'ROS', title: opts.espn ? "ESPN's rest-of-season projection under this league's scoring (season projection minus points already scored)" : `Projected points, weeks ${opts.week}–${opts.rosEnd} (league scoring)`,
-      render: (p) => <span className="font-medium">{fmt(p.proj_ros, 0)}{opts.showRank && p.proj_ros_rank ? <span className="ml-1 text-[10px] text-stone-400">{p.proj_ros_rank}</span> : null}</span>,
-      sort: (p) => p.proj_ros, align: 'right', desc: true,
-    },
+    rosColumn,
   ]
   if (opts.vsMine) {
     cols.push({
-      key: 'vs_mine', header: 'vs mine', title: 'Rest-of-season projection minus the weakest player you roster at this position (RB/WR/TE compare against your weakest flex-eligible player). Positive = an upgrade.',
-      render: (p) => p.vs_mine == null ? <span className="text-stone-400">—</span> : <span className={p.vs_mine > 0 ? 'font-semibold text-emerald-700' : 'text-stone-400'}>{p.vs_mine > 0 ? '+' : ''}{fmt(p.vs_mine, 0)}</span>,
+      key: 'vs_mine', header: 'vs mine', title: "Places above the player of yours he would replace, on FantasyPros' rest-of-season overall ranking — your worst at his position, or for RB/WR/TE your worst one beyond the starters your lineup needs. Positive = an upgrade. That player is marked 'weakest' on your roster.",
+      render: (p) => p.vs_mine == null ? <span className="text-stone-400">—</span> : <span className={p.vs_mine > 0 ? 'font-semibold text-emerald-700' : 'text-stone-400'}>{p.vs_mine > 0 ? '+' : ''}{p.vs_mine}</span>,
       sort: (p) => p.vs_mine, align: 'right', desc: true,
     })
   }
   return cols
 }
 
-/** Each panel answers one question, so it carries only the columns that answer it. Everything a
- * player is doing elsewhere is a click away in the drawer; repeating all of it in all four panels
- * is what made the page a scroll. Identity (name, position, opponent) is the only shared spine. */
-function panelColumns(kind: 'fp' | 'production' | 'move', opts: { week: number; lastWeek: number; move?: Movement['kind']; claimed?: Map<string, number | null> }): Column<Target>[] {
-  const identity: Column<Target>[] = [
-    {
-      key: 'name', header: 'Player',
-      render: (t) => {
-        const bid = opts.claimed?.get(t.player_id)
-        return (
-          <span className="inline-flex items-center gap-1.5">
-            <PlayerCell p={t} />
-            {bid !== undefined && (
-              <span
-                title={`You already have a waiver claim in on this player${bid != null ? ` for $${bid}` : ''}`}
-                className="rounded bg-sky-200 px-1 py-0.5 text-[9.5px] font-bold leading-none text-sky-900"
-              >{bid != null ? `BID $${bid}` : 'CLAIMED'}</span>
-            )}
-          </span>
-        )
-      },
-      sort: (t) => t.name,
-    },
-    { key: 'pos', header: 'Pos', render: (t) => <Pos pos={t.position} />, sort: (t) => POS_ORDER.indexOf(t.position), align: 'center' },
-    { key: 'opp', header: `Wk ${opts.week}`, title: 'Opponent the week you are claiming into', render: (t) => <span className={t.on_bye ? 'text-stone-400' : ''}>{t.on_bye ? 'BYE' : t.opponent ?? '—'}</span>, sort: (t) => t.opponent },
-  ]
-  const num = (v: number | null | undefined, cls = '') =>
-    v == null ? <span className="text-stone-300">·</span> : <span className={cls}>{v}</span>
+const LIST_POS = ['ALL', 'QB', 'RB', 'WR', 'TE', 'FLEX']
+const dot = <span className="text-stone-300">·</span>
+const fits = (pos: string, p: Player) => pos === 'FLEX' ? ['RB', 'WR', 'TE'].includes(p.position) : pos === 'ALL' || p.position === pos
+const shown = (p: Player, pos: string, hideOut: boolean) => fits(pos, p) && !(hideOut && OUT_STATUSES.has(p.injury_status ?? ''))
 
-  let lead: Column<Target>[] = []
-  let trail: Column<Target>[] = []
-  if (kind === 'fp') {
-    lead = [{
-      key: 'fp_waiver', header: 'FP', title: "Rank on FantasyPros' waiver-wire shortlist (10 experts, ~50 players)",
-      render: (t) => t.fp_waiver_rank == null ? <span className="text-stone-300">·</span>
-        : <span className="font-semibold text-violet-800">{t.fp_waiver_rank}<span className="ml-1 text-[10px] font-normal text-violet-500">{t.fp_waiver_pos_rank}</span></span>,
-      sort: (t) => t.fp_waiver_rank ?? 9999, align: 'right',
-    }]
-  } else if (kind === 'production') {
-    lead = [{
-      key: 'last_week_pts', header: `Wk ${opts.lastWeek}`, title: `Fantasy points scored in week ${opts.lastWeek}, in this league's scoring — the first thing this panel sorts on`,
-      render: (t) => t.last_week_pts == null ? <span className="text-stone-300">·</span>
-        : <span className={t.last_week_pts >= 15 ? 'font-semibold text-emerald-700' : ''}>{fmt(t.last_week_pts)}</span>,
-      sort: (t) => t.last_week_pts, align: 'right', desc: true,
-    }]
-    trail = [
-      { key: 'lw_targets', header: 'Tgt', title: `Times targeted in week ${opts.lastWeek}. Part of the volume tie-break at every position.`, render: (t) => num(t.lw_targets, 'font-medium text-sky-800'), sort: (t) => t.lw_targets, align: 'right', desc: true },
-      { key: 'lw_carries', header: 'Car', title: `Rushing attempts in week ${opts.lastWeek}. Added to targets for a back's volume.`, render: (t) => num(t.lw_carries, 'font-medium text-amber-800'), sort: (t) => t.lw_carries, align: 'right', desc: true },
-      {
-        key: 'lw_snap_pct', header: 'Snap%', title: `Share of the team's offensive snaps in week ${opts.lastWeek} — the last tie-break, after points and volume`,
-        render: (t) => t.lw_snap_pct == null ? <span className="text-stone-300">·</span>
-          : <span className={t.lw_snap_pct >= 0.7 ? 'font-semibold text-emerald-700' : 'text-stone-600'}>{Math.round(t.lw_snap_pct * 100)}%</span>,
-        sort: (t) => t.lw_snap_pct, align: 'right', desc: true,
-      },
-    ]
-  } else if (opts.move === 'sleeper') {
-    lead = [
-      { key: 'adds_24h', header: 'Adds', title: 'Added across all Sleeper leagues in the last 24 hours', render: (t) => t.adds_24h ? <span className="font-semibold text-emerald-700">{fmtInt(t.adds_24h)}</span> : <span className="text-stone-300">·</span>, sort: (t) => t.adds_24h, align: 'right', desc: true },
-      { key: 'drops_24h', header: 'Drops', title: 'Dropped across all Sleeper leagues in the last 24 hours', render: (t) => t.drops_24h ? <span className="text-red-700">{fmtInt(t.drops_24h)}</span> : <span className="text-stone-300">·</span>, sort: (t) => t.drops_24h, align: 'right', desc: true },
-    ]
-  } else if (opts.move === 'espn') {
-    lead = [
-      { key: 'owned_change', header: 'Own Δ', title: 'Change in the percentage of ESPN teams rostering this player', render: (t) => t.owned_change == null ? <span className="text-stone-300">·</span> : <span className={t.owned_change > 0 ? 'font-semibold text-emerald-700' : 'text-red-700'}>{t.owned_change > 0 ? '+' : ''}{fmt(t.owned_change)}</span>, sort: (t) => t.owned_change, align: 'right', desc: true },
-      { key: 'owned', header: 'Own%', title: 'Percent of ESPN teams rostering this player now', render: (t) => pct(t.owned), sort: (t) => t.owned, align: 'right', desc: true },
-    ]
-  } else {
-    lead = [
-      { key: 'adds', header: 'Adds', title: 'Added across all Yahoo leagues, from its Transaction Trends page', render: (t) => t.adds ? <span className="font-semibold text-emerald-700">{fmtInt(t.adds)}</span> : <span className="text-stone-300">·</span>, sort: (t) => t.adds, align: 'right', desc: true },
-      { key: 'drops', header: 'Drops', title: 'Dropped across all Yahoo leagues', render: (t) => t.drops ? <span className="text-red-700">{fmtInt(t.drops)}</span> : <span className="text-stone-300">·</span>, sort: (t) => t.drops, align: 'right', desc: true },
-    ]
+/** A target's standing in one league: whether you can have him there, what he would be worth
+ * over the player of yours he would replace, and your claim on him if you have made one. */
+function StandingCell({ st, lg }: { st: WaiverStanding | undefined; lg: WaiverLeague }) {
+  if (!st) return dot
+  if (st.status === 'mine') {
+    const starting = !['BN', 'IR', 'TAXI'].includes(st.role)
+    return starting
+      ? <span title={`Yours in ${lg.name}, starting`} className="rounded bg-sky-600 px-1.5 py-0.5 text-[9.5px] font-bold leading-none text-white">START</span>
+      : <span title={`Yours in ${lg.name}`} className="rounded border border-sky-300 bg-white px-1.5 py-0.5 text-[9.5px] font-bold leading-none text-sky-700">{st.role === 'BN' ? 'BENCH' : st.role}</span>
   }
-
-  return [...lead, ...identity, ...trail]
-}
-
-/** One ranked panel. The table scrolls inside a fixed height so four panels stay on one screen
- * instead of turning the page into a column of tables. */
-function Panel({ title, blurb, rows, columns, sortKey, empty, control }: {
-  title: string; blurb: string; rows: Target[]; columns: Column<Target>[]; sortKey: string; empty: string
-  control?: ReactNode
-}) {
+  if (st.status === 'taken') return <span title={`Rostered by ${st.owner}`} className="mx-auto block max-w-[4.5rem] truncate text-[10.5px] text-stone-400">{st.owner}</span>
+  const w = st.status === 'waivers'
+  const gain = st.vs_mine
+  const tip = `${w ? `On waivers in ${lg.name}${st.until ? ` until ${shortDate(st.until)}` : ''}` : `Free agent in ${lg.name}`}.`
+    + (gain == null ? ' FantasyPros does not rank him rest of season.' : ` ${Math.abs(gain)} place${Math.abs(gain) === 1 ? '' : 's'} ${gain >= 0 ? 'above' : 'below'} the player of yours he would replace there (marked "weakest" on that roster), on FantasyPros' rest-of-season ranking.`)
+    + (st.claimed ? ` You have a claim in${st.bid != null ? ` for $${st.bid}` : ''}.` : '')
   return (
-    <section className="flex min-w-0 flex-col rounded-md border border-stone-200 bg-white">
-      <div className="border-b border-stone-200 px-3 py-2">
-        <div className="flex items-center gap-2">
-          <h2 className="text-[12.5px] font-semibold text-stone-800">{title} <span className="ml-0.5 text-[11px] font-normal text-stone-400">{rows.length}</span></h2>
-          {control && <span className="ml-auto">{control}</span>}
-        </div>
-        <p className="mt-0.5 text-[11px] leading-snug text-stone-500">{blurb}</p>
-      </div>
-      {rows.length === 0
-        ? <p className="px-3 py-2 text-[12px] text-stone-500">{empty}</p>
-        : (
-          <div className="max-h-[22rem] overflow-y-auto">
-            <DataTable rows={rows} columns={columns} rowKey={(t) => t.player_id} initialSort={{ key: sortKey, dir: sortKey === 'fp_waiver' ? 'asc' : 'desc' }} rowClass={gameDayRowClass} />
-          </div>
-        )}
-    </section>
+    <span title={tip} className="inline-flex items-center gap-1 whitespace-nowrap">
+      <span className={`rounded border px-1 py-0.5 text-[10px] font-semibold leading-none ${w ? 'border-amber-300 bg-amber-50 text-amber-800' : 'border-emerald-300 bg-emerald-50 text-emerald-800'}`}>{w ? 'W' : 'FA'}</span>
+      {gain != null && <span className={`text-[11px] tabular-nums ${gain > 0 ? 'font-semibold text-emerald-700' : 'text-stone-400'}`}>{gain > 0 ? '+' : ''}{gain}</span>}
+      {st.claimed && <span className="rounded bg-sky-200 px-1 py-0.5 text-[9px] font-bold leading-none text-sky-900">{st.bid != null ? `$${st.bid}` : 'CLAIM'}</span>}
+    </span>
   )
 }
 
-/** Claims you have already submitted, which is the first thing worth knowing on this page —
- * it stops you bidding twice on the same player and shows what the budget is already committed
- * to. Every platform keeps claims private until they run, so this is only ever your own. */
-function PendingStrip({ claims, usesFaab }: { claims: PendingClaim[]; usesFaab: boolean }) {
-  const total = claims.reduce((sum, c) => sum + (c.bid ?? 0), 0)
+/** Open first, best upgrade first; then yours; then gone. */
+function standingSort(st: WaiverStanding | undefined): number | null {
+  if (!st) return null
+  if (st.status === 'free' || st.status === 'waivers') return 1000 + (st.vs_mine ?? -500)
+  return st.status === 'mine' ? 0 : -1000
+}
+
+/** The columns for a waiver-list or trends table: who he is, what FantasyPros thinks of him for
+ * the rest of the season, what he did on the field last week, and where he is open. `lead` is
+ * whatever orders the list — FantasyPros' rank, or a platform's movement numbers. */
+function targetColumns(lead: Column<Target>[], opts: { week: number; lastWeek: number; leagues: WaiverLeague[] }): Column<Target>[] {
+  const lw = opts.lastWeek
+  return [
+    ...lead,
+    { key: 'name', header: 'Player', render: (t) => <PlayerCell p={t} showPos />, sort: (t) => t.name },
+    { key: 'opp', header: 'Opp', title: `Opponent in week ${opts.week}, the week you are claiming into`, render: (t) => <span className={t.on_bye ? 'text-stone-400' : ''}>{t.on_bye ? 'BYE' : t.opponent ?? '—'}</span>, sort: (t) => t.opponent },
+    rosColumn as Column<Target>,
+    {
+      key: 'lw_pts_half', header: `Wk ${lw}`, className: 'border-l border-stone-200',
+      title: `Fantasy points in week ${lw}, standard half-PPR — one scale for every league`,
+      render: (t) => t.lw_pts_half == null ? dot : <span className={t.lw_pts_half >= 15 ? 'font-semibold text-emerald-700' : ''}>{fmt(t.lw_pts_half)}</span>,
+      sort: (t) => t.lw_pts_half, align: 'right', desc: true,
+    },
+    {
+      key: 'lw_snap_pct', header: 'Snap', title: `Share of the team's offensive snaps in week ${lw} — the clearest read on whether the role is real`,
+      render: (t) => t.lw_snap_pct == null ? dot
+        : <span className={t.lw_snap_pct >= 0.7 ? 'font-semibold text-emerald-700' : t.lw_snap_pct >= 0.45 ? 'text-stone-700' : 'text-stone-400'}>{Math.round(t.lw_snap_pct * 100)}%</span>,
+      sort: (t) => t.lw_snap_pct, align: 'right', desc: true,
+    },
+    { key: 'lw_targets', header: 'Tgt', title: `Times targeted in week ${lw}`, render: (t) => t.lw_targets ? <span className="font-medium text-sky-800">{t.lw_targets}</span> : dot, sort: (t) => t.lw_targets, align: 'right', desc: true },
+    { key: 'lw_carries', header: 'Car', title: `Rushing attempts in week ${lw}`, render: (t) => t.lw_carries ? <span className="font-medium text-amber-800">{t.lw_carries}</span> : dot, sort: (t) => t.lw_carries, align: 'right', desc: true },
+    ...opts.leagues.map((lg, i): Column<Target> => ({
+      key: `lg_${lg.league_id}`,
+      className: i === 0 ? 'border-l border-stone-200' : '',
+      title: `${lg.name} — FA / W is open (with "vs mine": places above the player of yours he would replace), otherwise yours or whose`,
+      header: (
+        <span className="mx-auto flex max-w-[4.75rem] items-stretch gap-1.5 text-left normal-case">
+          <LeagueBar leagueId={lg.league_id} />
+          <span className="min-w-0"><PlatformBadge platform={lg.platform} /><span className="mt-0.5 block truncate font-medium text-stone-600">{lg.name}</span></span>
+        </span>
+      ),
+      render: (t) => <StandingCell st={t.leagues[lg.league_id]} lg={lg} />,
+      sort: (t) => standingSort(t.leagues[lg.league_id]), align: 'center', desc: true,
+    })),
+  ]
+}
+
+/** How each platform measures movement, as the columns that lead its trends table. */
+function movementColumns(kind: Platform): Column<Target>[] {
+  if (kind === 'espn') {
+    return [
+      { key: 'owned_change', header: 'Own Δ', title: 'Change in the percentage of ESPN teams rostering this player', render: (t) => t.owned_change == null ? dot : <span className={t.owned_change > 0 ? 'font-semibold text-emerald-700' : 'text-red-700'}>{t.owned_change > 0 ? '+' : ''}{fmt(t.owned_change)}</span>, sort: (t) => t.owned_change, align: 'right', desc: true },
+      { key: 'owned', header: 'Own%', title: 'Percent of ESPN teams rostering this player now', render: (t) => pct(t.owned), sort: (t) => t.owned, align: 'right', desc: true },
+    ]
+  }
+  if (kind === 'yahoo') {
+    return [
+      { key: 'adds', header: 'Adds', title: 'Added across all Yahoo leagues, from its Transaction Trends page', render: (t) => t.adds ? <span className="font-semibold text-emerald-700">{fmtInt(t.adds)}</span> : dot, sort: (t) => t.adds, align: 'right', desc: true },
+      { key: 'drops', header: 'Drops', title: 'Dropped across all Yahoo leagues', render: (t) => t.drops ? <span className="text-red-700">{fmtInt(t.drops)}</span> : dot, sort: (t) => t.drops, align: 'right', desc: true },
+    ]
+  }
+  return [
+    { key: 'adds_24h', header: 'Adds', title: 'Added across all Sleeper leagues in the last 24 hours', render: (t) => t.adds_24h ? <span className="font-semibold text-emerald-700">{fmtInt(t.adds_24h)}</span> : dot, sort: (t) => t.adds_24h, align: 'right', desc: true },
+    { key: 'drops_24h', header: 'Drops', title: 'Dropped across all Sleeper leagues in the last 24 hours', render: (t) => t.drops_24h ? <span className="text-red-700">{fmtInt(t.drops_24h)}</span> : dot, sort: (t) => t.drops_24h, align: 'right', desc: true },
+  ]
+}
+
+const FP_LEAD: Column<Target>[] = [{
+  key: 'fp_waiver', header: 'FP', title: "Rank on FantasyPros' waiver-wire list, and within position",
+  render: (t) => t.fp_waiver_rank == null ? dot
+    : <span className="font-semibold text-violet-800">{t.fp_waiver_rank}<span className="ml-1 text-[10px] font-normal text-violet-500">{t.fp_waiver_pos_rank}</span></span>,
+  sort: (t) => t.fp_waiver_rank ?? 9999, align: 'right',
+}]
+
+/** Out of reach everywhere and not yours: kept for the context, but quiet. */
+const reachClass = (t: Target) => {
+  const open = Object.values(t.leagues).some((s) => s.status === 'free' || s.status === 'waivers' || s.status === 'mine')
+  return `${gameDayRowClass(t)} ${open ? '' : 'opacity-45'}`
+}
+
+/** Claims you have already submitted, in every league — the first thing worth knowing on this
+ * page: it stops you bidding twice and shows what each budget is committed to. Every platform
+ * keeps claims private until they run, so these are only ever your own. */
+function PendingStrip({ leagues }: { leagues: WaiverLeague[] }) {
+  const withClaims = leagues.filter((l) => l.pending.length)
+  if (!withClaims.length) return null
   return (
     <section className="rounded-md border border-sky-200 bg-sky-50/60 px-3 py-2">
-      <div className="flex flex-wrap items-baseline gap-x-3 gap-y-1">
-        <h2 className="text-[12.5px] font-semibold text-stone-800">
-          Your pending claims <span className="ml-0.5 text-[11px] font-normal text-stone-400">{claims.length}</span>
-        </h2>
-        {claims[0]?.runs_on && <span className="text-[11px] text-stone-500">runs {claims[0].runs_on}</span>}
-        {usesFaab && total > 0 && <span className="text-[11px] text-stone-500">${total} committed</span>}
+      <div className="flex items-baseline gap-3">
+        <h2 className="text-[12.5px] font-semibold text-stone-800">Your pending claims</h2>
         <span className="ml-auto text-[11px] text-stone-400">already submitted — not a recommendation</span>
       </div>
-      <ul className="mt-1.5 flex flex-wrap gap-x-4 gap-y-1 text-[12px]">
-        {claims.map((c, i) => (
-          <li key={`${c.player_id ?? c.name}-${i}`} className="flex items-baseline gap-1.5">
-            {c.priority != null && <span className="rounded bg-sky-200 px-1 py-0.5 text-[9.5px] font-bold leading-none text-sky-900">{c.priority}</span>}
-            <span className="font-medium text-stone-800">{c.name}</span>
-            {c.bid != null && <span className="font-semibold text-emerald-800">${c.bid}</span>}
-          </li>
+      <div className="mt-1.5 space-y-1">
+        {withClaims.map((lg) => (
+          <div key={lg.league_id} className="flex flex-wrap items-stretch gap-x-4 gap-y-1 text-[12px]">
+            <span className="flex w-40 shrink-0 items-stretch gap-1.5"><LeagueBar leagueId={lg.league_id} /><span className="truncate font-medium text-stone-700">{lg.name}</span></span>
+            {lg.pending.map((c, i) => (
+              <span key={`${c.player_id ?? c.name}-${i}`} className="flex items-baseline gap-1.5">
+                {c.priority != null && <span className="rounded bg-sky-200 px-1 py-0.5 text-[9.5px] font-bold leading-none text-sky-900">{c.priority}</span>}
+                <span className="font-medium text-stone-800">{c.name}</span>
+                {c.bid != null && <span className="font-semibold text-emerald-800">${c.bid}</span>}
+              </span>
+            ))}
+          </div>
         ))}
-      </ul>
+      </div>
     </section>
   )
 }
@@ -306,7 +323,7 @@ function ArticleBlock({ digest }: { digest: ArticleDigest }) {
   )
 
   return (
-    <aside className="w-full shrink-0 self-start rounded-md border border-amber-200 bg-amber-50/50 lg:sticky lg:top-3 lg:max-h-[calc(100vh-2rem)] lg:w-80 lg:overflow-y-auto xl:w-96">
+    <aside className="w-full rounded-md border border-amber-200 bg-amber-50/50 lg:min-h-0 lg:flex-1 lg:overflow-y-auto">
       <div className="sticky top-0 z-10 border-b border-amber-200 bg-amber-50 px-3 py-2">
         <h2 className="text-[13px] font-semibold text-stone-800">What the columns say</h2>
         <p className="mt-0.5 text-[11px] text-stone-500">
@@ -349,176 +366,264 @@ function ArticleBlock({ digest }: { digest: ArticleDigest }) {
   )
 }
 
-type Tab = 'targets' | 'browse'
+/** Your team in one league at a time, beside the pool — the players any claim is made over, and
+ * the room you have to make one. The numbers come off the same projections and rankings as the
+ * waiver rows, so a free agent and the man he would replace read alike. Grouped by position in
+ * FantasyPros' rest-of-season order, so the bottom of each group is where a drop would come from;
+ * "weakest" marks the player "vs mine" measures against. Then IR, taxi and whatever is open —
+ * open roster spots mean a claim needs no drop, and an empty starting slot is a lineup to fix. */
+function RosterCard({ leagues, selected, onSelect, week }: { leagues: WaiverLeague[]; selected: string | null; onSelect: (id: string) => void; week: number }) {
+  const lg = leagues.find((l) => l.league_id === selected) ?? leagues[0]
+  if (!lg) return null
+  const active = lg.roster.filter((r) => r.slot !== 'IR' && r.slot !== 'TAXI')
+  const groups = (['QB', 'RB', 'WR', 'TE'] as const)
+    .map((pos) => [pos, active.filter((r) => r.position === pos).sort((a, b) => (a.fp_ros_ecr ?? 9999) - (b.fp_ros_ecr ?? 9999))] as const)
+    .filter(([, rows]) => rows.length)
+  const ir = lg.roster.filter((r) => r.slot === 'IR')
+  const taxi = lg.roster.filter((r) => r.slot === 'TAXI')
+  const { spots } = lg
+  const t = lg.my_team
+  const faab = lg.waiver.type_code === 2 && t ? `$${t.faab_remaining} FAAB` : null
 
+  const Row = ({ r }: { r: typeof lg.roster[number] }) => (
+    <li className={`flex items-center gap-1.5 py-0.5 text-[12px] ${r.slot === 'IR' || r.slot === 'TAXI' ? 'opacity-70' : ''}`}>
+      <span className="w-10 shrink-0"><Pos pos={r.slot} /></span>
+      <span className="min-w-0 flex-1 overflow-hidden whitespace-nowrap"><PlayerCell p={r} /></span>
+      {r.vs_mine_bar && (
+        <span title={`The player "vs mine" measures a free agent against: your lowest FantasyPros rest-of-season rank among those a claim could replace — your worst ${r.position === 'QB' ? 'QB' : 'at a position, or your worst RB / WR / TE beyond the starters your lineup needs'}. IR and taxi aside.`}
+              className="shrink-0 rounded bg-stone-100 px-1 py-0.5 text-[9px] font-semibold uppercase leading-none text-stone-500">weakest</span>
+      )}
+      <span className="w-8 shrink-0 text-right tabular-nums text-stone-800">{fmt(r.proj_week)}</span>
+      <span className="w-9 shrink-0 text-right tabular-nums text-stone-500">{r.fp_ros_pos_rank ?? dot}</span>
+    </li>
+  )
+  const Empty = ({ slot, text, tone = 'text-stone-400' }: { slot: string; text: string; tone?: string }) => (
+    <li className="flex items-center gap-1.5 py-0.5 text-[12px]">
+      <span className="w-10 shrink-0"><Pos pos={slot} /></span>
+      <span className={`flex-1 rounded border border-dashed border-stone-200 px-1.5 text-[11px] ${tone}`}>{text}</span>
+    </li>
+  )
+  const Group = ({ label, count, children }: { label: string; count?: string; children: ReactNode }) => (
+    <div>
+      <h3 className="text-[10px] font-bold uppercase tracking-wide text-stone-400">{label} {count && <span className="font-medium">{count}</span>}</h3>
+      <ul>{children}</ul>
+    </div>
+  )
+
+  return (
+    <section className="shrink-0 rounded-md border border-stone-200 bg-white">
+      <div className="grid border-b border-stone-200" style={{ gridTemplateColumns: `repeat(${leagues.length}, minmax(0, 1fr))` }}>
+        {leagues.map((l) => (
+          <button key={l.league_id} onClick={() => onSelect(l.league_id)} title={l.name}
+                  className={`flex min-w-0 items-stretch gap-1 px-1.5 py-1.5 text-left text-[10.5px] ${l.league_id === lg.league_id ? 'bg-stone-900 text-white' : 'text-stone-600 hover:bg-stone-100'}`}>
+            <LeagueBar leagueId={l.league_id} />
+            <span className="truncate">{l.name}</span>
+          </button>
+        ))}
+      </div>
+      <div className="flex flex-wrap items-center gap-x-2 gap-y-1 border-b border-stone-200 px-3 py-2">
+        <h2 className="min-w-0 truncate text-[12.5px] font-semibold text-stone-800">{t?.team_name ?? 'Your roster'}</h2>
+        <span className="flex flex-wrap items-center gap-1.5 text-[10.5px]">
+          <span className={`rounded px-1.5 py-0.5 font-semibold ${spots.open ? 'bg-emerald-100 text-emerald-800' : 'bg-stone-100 text-stone-500'}`}
+                title={spots.open ? 'Room to add without dropping anyone' : 'Every roster spot is taken — a claim needs a drop'}>{spots.open ? `${spots.open} open` : 'full'}</span>
+          {spots.ir.slots > 0 && <span className="rounded bg-stone-100 px-1.5 py-0.5 text-stone-600" title="IR slots used of available">IR {spots.ir.used}/{spots.ir.slots}</span>}
+          {faab && <span className="rounded bg-amber-100 px-1.5 py-0.5 text-amber-800">{faab}</span>}
+        </span>
+        <span className="ml-auto flex shrink-0 gap-2 text-[10px] font-medium uppercase tracking-wide text-stone-400">
+          <span className="w-8 text-right" title={`Projected points in week ${week}, this league's scoring`}>Wk {week}</span>
+          <span className="w-9 text-right" title="FantasyPros rest-of-season rank within position (half PPR)">ROS</span>
+        </span>
+      </div>
+      <div className="space-y-1.5 px-3 py-2">
+        {spots.empty_starts.length > 0 && (
+          <Group label="Empty in the lineup">
+            {spots.empty_starts.map((slot, i) => <Empty key={`${slot}-${i}`} slot={slot} text="nobody starting" tone="font-medium text-red-700" />)}
+          </Group>
+        )}
+        {groups.map(([pos, rows]) => (
+          <Group key={pos} label={pos} count={String(rows.length)}>{rows.map((r) => <Row key={r.player_id} r={r} />)}</Group>
+        ))}
+        {spots.open > 0 && (
+          <Group label="Open" count={String(spots.open)}>
+            {Array.from({ length: spots.open }, (_, i) => <Empty key={i} slot="BN" text="open roster spot" />)}
+          </Group>
+        )}
+        {(spots.ir.slots > 0 || ir.length > 0) && (
+          <Group label="IR" count={`${spots.ir.used}/${spots.ir.slots}`}>
+            {ir.map((r) => <Row key={r.player_id} r={r} />)}
+            {Array.from({ length: Math.max(0, spots.ir.slots - spots.ir.used) }, (_, i) => <Empty key={i} slot="IR" text="open IR slot" />)}
+          </Group>
+        )}
+        {(spots.taxi.slots > 0 || taxi.length > 0) && (
+          <Group label="Taxi" count={`${spots.taxi.used}/${spots.taxi.slots}`}>
+            {taxi.map((r) => <Row key={r.player_id} r={r} />)}
+            {Array.from({ length: Math.max(0, spots.taxi.slots - spots.taxi.used) }, (_, i) => <Empty key={i} slot="TAXI" text="open taxi slot" />)}
+          </Group>
+        )}
+      </div>
+    </section>
+  )
+}
+
+/** The right-hand column on both tabs: your roster, then the waiver columns when there are any.
+ * It stays in view while the tables scroll, under the 2.5rem header. */
+function SideColumn({ children }: { children: ReactNode }) {
+  return (
+    <div className="flex w-full shrink-0 flex-col gap-3 self-start lg:sticky lg:top-12 lg:max-h-[calc(100vh-3.5rem)] lg:w-72 lg:overflow-y-auto">
+      {children}
+    </div>
+  )
+}
+
+type Tab = 'list' | 'browse'
+
+/** The waiver wire across every league at once, the way streaming works: FantasyPros' waiver list
+ * is the spine, in their order, and each row carries both halves of the decision — what the
+ * player did on the field last week, and where he is open and what he would be worth to you in
+ * each league. The trends lists follow with the same columns, then your roster in whichever
+ * league you are looking at. Browse all is the whole free-agent pool of the league picked in the
+ * sidebar, for anyone the lists do not reach. */
 export default function Waivers() {
   const { leagueId, league, week } = useApp()
-  // Deliberately not keyed on the app's week selector: a waiver claim always processes into the
-  // *upcoming* week, so the server decides which week that is rather than the lineup-view week.
-  const { data, isLoading, error } = useQuery({
+  const board = useQuery({ queryKey: ['waiver-board'], queryFn: () => api.waiverBoard(), staleTime: 60_000 })
+  const [tab, setTab] = useState<Tab>('list')
+  const browse = useQuery({
     queryKey: ['waivers', leagueId],
     queryFn: () => api.waivers(leagueId!),
-    enabled: !!leagueId,
+    enabled: !!leagueId && tab === 'browse',
     staleTime: 60_000,
   })
-  const [tab, setTab] = useState<Tab>('targets')
   const [pos, setPos] = useState('ALL')
-  const [search, setSearch] = useState('')
   const [hideOut, setHideOut] = useState(false)
+  const [trendKind, setTrendKind] = useState<Platform | null>(null)
+  // The roster follows the league picked in the sidebar until you switch it here.
+  const [rosterLeague, setRosterLeague] = useState<string | null>(leagueId)
+  useEffect(() => { if (leagueId) setRosterLeague(leagueId) }, [leagueId])
+  // Browse filters.
+  const [browsePos, setBrowsePos] = useState('ALL')
+  const [search, setSearch] = useState('')
   const [relevantOnly, setRelevantOnly] = useState(true)
   const [fpOnly, setFpOnly] = useState(false)
-  // The production panel filters itself. Quarterbacks out-score everyone on raw points and take
-  // every snap, so an unfiltered list is a list of quarterbacks; FLEX is the default because that
-  // is the pool you are usually shopping in. It overrides the page filter for this panel only.
-  const [prodPos, setProdPos] = useState('FLEX')
 
-  // The week claims process into, and the week whose box score we are reading.
-  const targetWeek = data?.week ?? week
+  const d = board.data
+  const targetWeek = d?.week ?? week
   const lastWeek = Math.max(1, targetWeek - 1)
+  const fpRows = useMemo(() => (d?.fantasypros ?? []).filter((t) => shown(t, pos, hideOut)), [d, pos, hideOut])
+  const trend = d?.trends.find((t) => t.kind === trendKind) ?? d?.trends[0] ?? null
+  const trendRows = useMemo(() => (trend?.rows ?? []).filter((t) => shown(t, pos, hideOut)), [trend, pos, hideOut])
 
-  const { rows, outCount, fpCount } = useMemo(() => {
-    const s = search.trim().toLowerCase()
-    const matched = (data?.players ?? []).filter((p) => {
-      if (pos === 'FLEX' ? !['RB', 'WR', 'TE'].includes(p.position) : pos !== 'ALL' && p.position !== pos) return false
+  const fpCols = useMemo(() => targetColumns(FP_LEAD, { week: targetWeek, lastWeek, leagues: d?.leagues ?? [] }), [targetWeek, lastWeek, d?.leagues])
+  const trendCols = useMemo(() => targetColumns(movementColumns(trend?.kind ?? 'sleeper'), { week: targetWeek, lastWeek, leagues: d?.leagues ?? [] }),
+    [trend?.kind, targetWeek, lastWeek, d?.leagues])
+
+  const browseRows = useMemo(() => {
+    const q = search.trim().toLowerCase()
+    return (browse.data?.players ?? []).filter((p) => {
+      if (!shown(p, browsePos, hideOut)) return false
       if (fpOnly && p.fp_waiver_rank == null) return false
-      if (relevantOnly && !(p.owned >= 1 || p.adds_24h > 0 || (p.proj_week ?? 0) >= 2 || (p.proj_ros ?? 0) >= 20)) return false
-      if (s && !(p.name.toLowerCase().includes(s) || (p.team ?? '').toLowerCase() === s)) return false
+      if (relevantOnly && !(p.owned >= 1 || p.adds_24h > 0 || (p.proj_week ?? 0) >= 2 || (p.proj_ros ?? 0) >= 20 || p.fp_ros_ecr != null)) return false
+      if (q && !(p.name.toLowerCase().includes(q) || (p.team ?? '').toLowerCase() === q)) return false
       return true
     })
-    const isOut = (p: Player) => OUT_STATUSES.has(p.injury_status ?? '')
-    // outCount is reported whether or not the filter is on, so it always reads as "this many
-    // players the Out / IR toggle decides the fate of" rather than appearing only once they vanish.
-    return {
-      rows: hideOut ? matched.filter((p) => !isOut(p)) : matched,
-      outCount: matched.filter(isOut).length,
-      fpCount: (data?.players ?? []).filter((p) => p.fp_waiver_rank != null).length,
-    }
-  }, [data, pos, search, hideOut, relevantOnly, fpOnly])
-
-  // The same filters apply to all three panels, so a position filter narrows every read at once.
-  const panels = useMemo(() => {
-    const q = search.trim().toLowerCase()
-    const keep = (t: Target) => {
-      if (pos === 'FLEX' ? !['RB', 'WR', 'TE'].includes(t.position) : pos !== 'ALL' && t.position !== pos) return false
-      if (hideOut && OUT_STATUSES.has(t.injury_status ?? '')) return false
-      if (q && !(t.name.toLowerCase().includes(q) || (t.team ?? '').toLowerCase() === q)) return false
-      return true
-    }
-    return {
-      fp: (data?.by_fantasypros ?? []).filter(keep),
-      production: (data?.by_production ?? []).filter((t) => {
-        if (prodPos === 'FLEX' ? !['RB', 'WR', 'TE'].includes(t.position) : prodPos !== 'ALL' && t.position !== prodPos) return false
-        if (hideOut && OUT_STATUSES.has(t.injury_status ?? '')) return false
-        if (q && !(t.name.toLowerCase().includes(q) || (t.team ?? '').toLowerCase() === q)) return false
-        return true
-      }),
-      trending: (data?.by_trending ?? []).filter(keep),
-    }
-  }, [data, pos, search, hideOut, prodPos])
-
+  }, [browse.data, browsePos, hideOut, fpOnly, relevantOnly, search])
   const browseColumns = useMemo(() => playerColumns({
-    week: targetWeek, rosEnd: data?.ros_end_week ?? 17, showRank: true, vsMine: true, espn: league?.platform === 'espn', fp: true, fpWaiver: true, usage: lastWeek,
-  }), [targetWeek, lastWeek, data?.ros_end_week, league?.platform])
+    week: browse.data?.week ?? targetWeek, showRank: true, vsMine: true, espn: league?.platform === 'espn', fp: true, fpWaiver: true, usage: lastWeek,
+  }), [browse.data?.week, targetWeek, lastWeek, league?.platform])
 
-  const claimed = useMemo(() => {
-    const m = new Map<string, number | null>()
-    for (const c of data?.pending ?? []) if (c.player_id) m.set(c.player_id, c.bid)
-    return m
-  }, [data?.pending])
-  const colOpts = useMemo(() => ({ week: targetWeek, lastWeek, claimed }), [targetWeek, lastWeek, claimed])
-  const fpCols = useMemo(() => panelColumns('fp', colOpts), [colOpts])
-  const prodCols = useMemo(() => panelColumns('production', colOpts), [colOpts])
-  const moveCols = useMemo(() => panelColumns('move', { ...colOpts, move: data?.movement?.kind }), [colOpts, data?.movement?.kind])
-
-  if (!league) return <Spinner />
-  const t = league.my_team
+  const meta = d?.fantasypros_meta
+  const side = d && (
+    <SideColumn>
+      <RosterCard leagues={d.leagues} selected={rosterLeague} onSelect={setRosterLeague} week={targetWeek} />
+      {tab === 'list' && d.articles && <ArticleBlock digest={d.articles} />}
+    </SideColumn>
+  )
 
   return (
     <div className="space-y-3">
       <div className="flex flex-wrap items-center gap-x-4 gap-y-2">
-        <h1 className="flex items-stretch gap-2 text-base font-semibold">
-          <LeagueBar leagueId={league.league_id} />
-          <span className="flex items-center gap-2"><PlatformBadge platform={league.platform} />Waiver wire · {league.name}</span>
-        </h1>
-        <div className="flex items-center gap-1.5 text-[12px] text-stone-600">
-          <Chip tone="amber">{league.waiver.type}{league.waiver.type_code === 2 && t ? ` · $${t.faab_remaining} of $${league.waiver.budget} left` : ''}</Chip>
-          {league.waiver.daily ? <Chip title={league.waiver.days?.join(', ')}>Runs daily{league.waiver.hour != null ? ` · ${league.waiver.hour}:00` : ''}{league.waiver.clear_days ? ` · ${league.waiver.clear_days}d clear` : ''}</Chip>
-            : league.waiver.day_of_week && <Chip>Runs {league.waiver.day_of_week}{league.waiver.clear_days ? ` · ${league.waiver.clear_days}d clear` : ''}</Chip>}
-          {league.waiver.bid_min > 0 && <Chip>Min bid ${league.waiver.bid_min}</Chip>}
-          <Chip>{league.scoring_format}{league.pass_td ? ` · ${league.pass_td}pt pass TD` : ''}</Chip>
-        </div>
+        <h1 className="text-base font-semibold">Waiver wire · all leagues</h1>
+        <span className="ml-auto text-[12px] text-stone-500">
+          Week {targetWeek} claims{meta?.updated ? ` · FantasyPros list of ${meta.updated}${meta.experts ? `, ${meta.experts} experts` : ''}` : ''}
+        </span>
       </div>
 
       <div className="flex flex-wrap items-center gap-3">
         <div className="flex rounded-md border border-stone-200 bg-white p-0.5">
-          {([['targets', 'Claim targets'], ['browse', 'Browse all']] as [Tab, string][]).map(([k, label]) => (
+          {([['list', 'Waiver list'], ['browse', `Browse all${league ? ` · ${league.name}` : ''}`]] as [Tab, string][]).map(([k, label]) => (
             <button key={k} onClick={() => setTab(k)} className={`rounded px-3 py-1 text-[12px] ${tab === k ? 'bg-stone-900 text-white' : 'text-stone-700 hover:bg-stone-100'}`}>{label}</button>
           ))}
         </div>
-        {(
-          <>
-            <div className="flex rounded-md border border-stone-200 bg-white p-0.5">
-              {POS_FILTERS.map((f) => (
-                <button key={f} onClick={() => setPos(f)} className={`rounded px-2.5 py-1 text-[12px] ${pos === f ? 'bg-stone-900 text-white' : 'text-stone-700 hover:bg-stone-100'}`}>{f}</button>
-              ))}
-            </div>
-            <input value={search} onChange={(e) => setSearch(e.target.value)} placeholder="Search name or team…" className="w-56 rounded-md border border-stone-200 bg-white px-2.5 py-1 text-[12px]" />
-            <label className="flex items-center gap-1.5 text-[12px] text-stone-700"><input type="checkbox" checked={hideOut} onChange={(e) => setHideOut(e.target.checked)} /> Hide Out / IR{outCount > 0 && <span className={hideOut ? 'text-amber-700' : 'text-stone-400'}>({hideOut ? `${outCount} hidden` : outCount})</span>}</label>
-          </>
-        )}
+        <div className="flex rounded-md border border-stone-200 bg-white p-0.5">
+          {(tab === 'list' ? LIST_POS : POS_FILTERS).map((f) => {
+            const on = (tab === 'list' ? pos : browsePos) === f
+            return <button key={f} onClick={() => (tab === 'list' ? setPos : setBrowsePos)(f)} className={`rounded px-2.5 py-1 text-[12px] ${on ? 'bg-stone-900 text-white' : 'text-stone-700 hover:bg-stone-100'}`}>{f}</button>
+          })}
+        </div>
+        <label className="flex items-center gap-1.5 text-[12px] text-stone-700"><input type="checkbox" checked={hideOut} onChange={(e) => setHideOut(e.target.checked)} /> Hide Out / IR</label>
         {tab === 'browse' && (
           <>
-            <label className="flex items-center gap-1.5 text-[12px] text-stone-700" title="Hide players nobody rosters, adds, or projects"><input type="checkbox" checked={relevantOnly} onChange={(e) => setRelevantOnly(e.target.checked)} /> Relevant only</label>
-            <label className="flex items-center gap-1.5 text-[12px] text-stone-700" title="Only players on the FantasyPros waiver-wire list"><input type="checkbox" checked={fpOnly} onChange={(e) => setFpOnly(e.target.checked)} /> <span className="rounded bg-violet-100 px-1 py-0.5 text-[9.5px] font-bold leading-none text-violet-800">FP</span> picks{fpCount > 0 && <span className="text-stone-400">({fpCount})</span>}</label>
+            <input value={search} onChange={(e) => setSearch(e.target.value)} placeholder="Search name or team…" className="w-56 rounded-md border border-stone-200 bg-white px-2.5 py-1 text-[12px]" />
+            <label className="flex items-center gap-1.5 text-[12px] text-stone-700" title="Hide players nobody rosters, adds, projects or ranks"><input type="checkbox" checked={relevantOnly} onChange={(e) => setRelevantOnly(e.target.checked)} /> Relevant only</label>
+            <label className="flex items-center gap-1.5 text-[12px] text-stone-700" title="Only players on the FantasyPros waiver-wire list"><input type="checkbox" checked={fpOnly} onChange={(e) => setFpOnly(e.target.checked)} /> <span className="rounded bg-violet-100 px-1 py-0.5 text-[9.5px] font-bold leading-none text-violet-800">FP</span> picks</label>
+            <span className="ml-auto text-[12px] text-stone-500">{browseRows.length} of {browse.data?.players.length ?? 0} free agents</span>
           </>
         )}
-        <span className="ml-auto text-[12px] text-stone-500">
-          {tab === 'targets' ? `Week ${targetWeek} claims` : `${rows.length} of ${data?.players.length ?? 0} free agents`}
-        </span>
       </div>
 
-      {isLoading && <Spinner label="Building the waiver wire (projections, usage, lines)…" />}
-      {error && <ErrorBox error={error} />}
+      {board.isLoading && <Spinner label="Reading every league's wire (rosters, usage, trends)…" />}
+      {board.error && <ErrorBox error={board.error} />}
 
-      {data && tab === 'targets' && (
+      {d && tab === 'list' && (
         <div className="flex flex-col gap-3 lg:flex-row lg:items-start">
           <div className="min-w-0 flex-1 space-y-3">
-            {data.pending.length > 0 && <PendingStrip claims={data.pending} usesFaab={(league.waiver?.budget ?? 0) > 0} />}
-            <Panel
-              title={`Week ${lastWeek} on the field`} sortKey="last_week_pts" rows={panels.production} columns={prodCols}
-              blurb={`Points first, then volume, then snap share — each one breaking ties in the one before it. Most of a waiver pool scores nothing, and that is where volume and snaps decide the order: targets for a receiver or tight end, carries and targets together for a back. Quarterbacks out-score everyone and play every snap, so this panel picks its own position.`}
-              empty={`Nothing recorded for available players in week ${lastWeek}${prodPos === 'ALL' ? '' : ` at ${prodPos}`}.`}
-              control={
-                <select
-                  value={prodPos} onChange={(e) => setProdPos(e.target.value)}
-                  title="Position shown in this panel only"
-                  className="rounded border border-stone-200 bg-white px-1.5 py-0.5 text-[11px] text-stone-700"
-                >
-                  {POS_FILTERS.map((f) => <option key={f} value={f}>{f}</option>)}
-                </select>
-              }
-            />
-            <div className="grid gap-3 xl:grid-cols-2">
-            <Panel
-              title="FantasyPros waiver list" sortKey="fp_waiver" rows={panels.fp} columns={fpCols}
-              blurb={`Their week ${targetWeek} shortlist, in their order — 10 experts, and the only forward-looking read here.`}
-              empty="Nobody available is on this week's FantasyPros waiver list."
-            />
-            {data.movement && data.by_trending && (
-              <Panel
-                title={data.movement.label} sortKey={data.movement.kind === 'sleeper' ? 'adds_24h' : data.movement.kind === 'espn' ? 'owned_change' : 'adds'}
-                rows={panels.trending} columns={moveCols} blurb={data.movement.blurb}
-                empty="Nothing is moving in this league's pool."
-              />
+            <PendingStrip leagues={d.leagues} />
+            <section className="space-y-1.5">
+              <h2 className="text-[12px] font-semibold uppercase tracking-wide text-stone-500">FantasyPros waiver list <span className="font-normal normal-case text-stone-400">{fpRows.length}</span></h2>
+              <p className="text-[12px] text-stone-500">
+                Their week {targetWeek} shortlist in their order, with what each player actually did in week {lastWeek} beside it — points, then the snap share
+                and targets or carries that say whether the role is real. Each league column says where he is open (<span className="font-semibold text-emerald-700">FA</span>,
+                or <span className="font-semibold text-amber-700">W</span> on waivers) and how many places he sits above the player of yours he would replace on the
+                rest-of-season ranking; otherwise yours, or whose. K and D/ST are on the streaming page.
+              </p>
+              <DataTable rows={fpRows} columns={fpCols} rowKey={(t) => t.player_id} initialSort={{ key: 'fp_waiver', dir: 'asc' }} rowClass={reachClass} maxHeight="36rem"
+                         empty="Nobody on this week's FantasyPros list matches the filters." />
+            </section>
+
+            {trend && (
+              <section className="space-y-1.5">
+                <div className="flex flex-wrap items-center gap-3">
+                  <h2 className="text-[12px] font-semibold uppercase tracking-wide text-stone-500">Trending <span className="font-normal normal-case text-stone-400">{trendRows.length}</span></h2>
+                  {d.trends.length > 1 && (
+                    <div className="flex rounded-md border border-stone-200 bg-white p-0.5">
+                      {d.trends.map((t) => (
+                        <button key={t.kind} onClick={() => setTrendKind(t.kind)}
+                                className={`rounded px-2.5 py-0.5 text-[11.5px] ${t.kind === trend.kind ? 'bg-stone-900 text-white' : 'text-stone-700 hover:bg-stone-100'}`}>{t.label}</button>
+                      ))}
+                    </div>
+                  )}
+                </div>
+                <p className="text-[12px] text-stone-500">{trend.blurb}</p>
+                {trend.error
+                  ? <ErrorBox error={new Error(`${trend.label}: ${trend.error}`)} />
+                  : <DataTable key={trend.kind} rows={trendRows} columns={trendCols} rowKey={(t) => t.player_id}
+                               initialSort={{ key: trend.kind === 'espn' ? 'owned_change' : trend.kind === 'yahoo' ? 'adds' : 'adds_24h', dir: 'desc' }}
+                               rowClass={reachClass} maxHeight="30rem" empty="Nothing is moving at this position." />}
+              </section>
             )}
-            </div>
           </div>
-          {data.articles && <ArticleBlock digest={data.articles} />}
+          {side}
         </div>
       )}
 
-      {data && tab === 'browse' && (
-        <DataTable rows={rows} columns={browseColumns} rowKey={(p) => p.player_id} initialSort={{ key: 'owned', dir: 'desc' }} rowClass={gameDayRowClass} />
+      {tab === 'browse' && (
+        <div className="flex flex-col gap-3 lg:flex-row lg:items-start">
+          <div className="min-w-0 flex-1">
+            {browse.isLoading && <Spinner label="Loading the whole pool…" />}
+            {browse.error && <ErrorBox error={browse.error} />}
+            {browse.data && <DataTable rows={browseRows} columns={browseColumns} rowKey={(p) => p.player_id} initialSort={{ key: 'owned', dir: 'desc' }} rowClass={gameDayRowClass} />}
+          </div>
+          {side}
+        </div>
       )}
     </div>
   )

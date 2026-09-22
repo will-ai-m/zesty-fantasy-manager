@@ -82,6 +82,12 @@ async def waivers(league_id: str, week: int | None = Query(default=None, ge=1, l
     return await svc().waivers(league_id, week)
 
 
+@app.get("/api/waivers")
+async def waiver_board(week: int | None = Query(default=None, ge=1, le=18)):
+    """The waiver wire across every league: FantasyPros' list, the trends, and my rosters."""
+    return await svc().waiver_board(week)
+
+
 @app.get("/api/streaming")
 async def streaming(week: int | None = Query(default=None, ge=1, le=18)):
     """K and D/ST across every league: the next four weeks of lines, and where each is open."""
