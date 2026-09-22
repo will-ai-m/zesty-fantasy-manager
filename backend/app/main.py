@@ -1,6 +1,7 @@
 from __future__ import annotations
 
 from contextlib import asynccontextmanager
+from typing import Literal
 
 import httpx
 from fastapi import FastAPI, HTTPException, Query
@@ -12,7 +13,7 @@ from .config import DATA_DIR, ESPN_LEAGUE_IDS, ESPN_S2, ESPN_SWID, YAHOO_COOKIE,
 from .espn import Espn
 from .yahoo import Yahoo
 from .odds import Odds
-from .plans import PlanIn, PlanPatch, PlanStore
+from .plans import PickIn, PickStore, PlanIn, PlanPatch, PlanStore
 from .services import Service
 from .sleeper import Sleeper
 
@@ -31,6 +32,7 @@ async def lifespan(app: FastAPI):
     app.state.odds = odds
     app.state.service = Service(sleeper, espn, yahoo, odds)
     app.state.plans = PlanStore(DATA_DIR / "plans.json")
+    app.state.picks = PickStore(DATA_DIR / "stream_picks.json")
     yield
     await app.state.odds.aclose()
     await sleeper.aclose()
@@ -76,6 +78,12 @@ async def me():
 @app.get("/api/leagues/{league_id}/waivers")
 async def waivers(league_id: str, week: int | None = Query(default=None, ge=1, le=18)):
     return await svc().waivers(league_id, week)
+
+
+@app.get("/api/streaming")
+async def streaming(week: int | None = Query(default=None, ge=1, le=18)):
+    """K and D/ST across every league: the next four weeks of lines, and where each is open."""
+    return await svc().streaming(week)
 
 
 @app.get("/api/leagues/{league_id}/roster")
@@ -165,3 +173,28 @@ async def delete_plan(plan_id: str):
     if not await store.delete(plan_id):
         raise HTTPException(404, "plan not found")
     return None
+
+
+# ---- streaming picks ----------------------------------------------------
+async def _picks() -> list[dict]:
+    season = (await svc().state())["season"]
+    return [p.model_dump() for p in await app.state.picks.list(season)]
+
+
+@app.get("/api/stream-picks")
+async def list_picks():
+    return await _picks()
+
+
+@app.put("/api/stream-picks")
+async def set_pick(body: PickIn):
+    """Make this unit your pick for its league, position and week, replacing any earlier one.
+    Answers with every pick for the season, so the page can swap its copy in one step."""
+    await app.state.picks.set((await svc().state())["season"], body)
+    return await _picks()
+
+
+@app.delete("/api/stream-picks")
+async def clear_pick(league_id: str, position: Literal["K", "DEF"], week: int = Query(ge=1, le=18)):
+    await app.state.picks.clear((await svc().state())["season"], league_id, position, week)
+    return await _picks()

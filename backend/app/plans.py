@@ -1,5 +1,6 @@
-"""Moves planner: adds/drops/bids you intend to make in Sleeper, tracked in a JSON file.
-Sleeper's public API is read-only, so nothing here touches Sleeper."""
+"""Moves planner: adds/drops/bids you intend to make in Sleeper, and the K and D/ST you mean to
+stream in each league, tracked in JSON files. Sleeper's public API is read-only, so nothing here
+touches Sleeper."""
 from __future__ import annotations
 
 import asyncio
@@ -39,7 +40,22 @@ class Plan(PlanIn):
     updated_at: float
 
 
-class PlanStore:
+class PickIn(BaseModel):
+    """The K or D/ST you want in one league for one week. Intent only: a pick carries no add, drop
+    or bid, because whether it still needs a move is read off the rosters each time it is shown
+    rather than recorded here."""
+    league_id: str
+    position: Literal["K", "DEF"]
+    week: int = Field(ge=1, le=18)
+    player_id: str
+
+
+class Pick(PickIn):
+    season: str
+    updated_at: float
+
+
+class JsonStore:
     def __init__(self, path: Path):
         self.path = path
         self.lock = asyncio.Lock()
@@ -49,12 +65,37 @@ class PlanStore:
             return []
         return json.loads(self.path.read_text() or "[]")
 
-    def _write(self, plans: list[dict]) -> None:
+    def _write(self, rows: list[dict]) -> None:
         self.path.parent.mkdir(parents=True, exist_ok=True)
         tmp = self.path.with_suffix(".tmp")
-        tmp.write_text(json.dumps(plans, indent=2))
+        tmp.write_text(json.dumps(rows, indent=2))
         tmp.replace(self.path)
 
+
+class PickStore(JsonStore):
+    """Streaming picks, at most one per league, position and week: picking another unit replaces
+    the pick rather than adding a second. Keyed by season too, so week 3 of next year starts empty."""
+
+    @staticmethod
+    def _key(p: dict) -> tuple:
+        return p["season"], p["league_id"], p["position"], p["week"]
+
+    async def list(self, season: str) -> list[Pick]:
+        async with self.lock:
+            return [Pick(**p) for p in self._read() if p["season"] == season]
+
+    async def set(self, season: str, data: PickIn) -> None:
+        async with self.lock:
+            pick = Pick(season=season, updated_at=time.time(), **data.model_dump()).model_dump()
+            self._write([p for p in self._read() if self._key(p) != self._key(pick)] + [pick])
+
+    async def clear(self, season: str, league_id: str, position: str, week: int) -> None:
+        async with self.lock:
+            key = (season, league_id, position, week)
+            self._write([p for p in self._read() if self._key(p) != key])
+
+
+class PlanStore(JsonStore):
     async def list(self) -> list[Plan]:
         async with self.lock:
             return [Plan(**p) for p in self._read()]

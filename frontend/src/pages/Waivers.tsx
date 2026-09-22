@@ -1,6 +1,6 @@
 import { useMemo, useState, type ReactNode } from 'react'
 import { useQuery } from '@tanstack/react-query'
-import { api, type ArticleDigest, type ArticleItem, type Movement, type PendingClaim, type Player, type Streamer, type Target } from '../api'
+import { api, type ArticleDigest, type ArticleItem, type Movement, type PendingClaim, type Player, type Target } from '../api'
 import { fmt, fmtInt, gameDayRowClass, OUT_STATUSES, pct, POS_ORDER, shortDate } from '../lib/format'
 import { useApp } from '../components/AppContext'
 import { Chip, ErrorBox, LeagueBar, PlatformBadge, PlayerCell, Pos, Spinner } from '../components/Badges'
@@ -450,7 +450,6 @@ export default function Waivers() {
 
   if (!league) return <Spinner />
   const t = league.my_team
-  const onPlan = (p: Player) => leagueId && openPlan({ leagueId, add: p })
 
   return (
     <div className="space-y-3">

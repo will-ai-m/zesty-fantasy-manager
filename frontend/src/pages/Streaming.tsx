@@ -1,11 +1,16 @@
-import { useState } from 'react'
-import { useQuery } from '@tanstack/react-query'
-import { api, type Player, type Streamer, type TeamFactors } from '../api'
-import { fmt, pct } from '../lib/format'
-import { useApp } from '../components/AppContext'
+import { useMemo, useState } from 'react'
+import { useMutation, useQuery, useQueryClient } from '@tanstack/react-query'
+import { api, type Standing, type Streamer, type StreamingLeague, type StreamingResponse, type TeamFactors } from '../api'
+import { fmt, shortDate } from '../lib/format'
 import { ErrorBox, LeagueBar, PlatformBadge, PlayerCell, Spinner } from '../components/Badges'
 
+type Pos = 'K' | 'DEF'
+type OnPick = (leagueId: string, s: Streamer) => void
+/** Your pick in a league at a position for a week, as a player id. */
+type PickOf = (leagueId: string, pos: Pos, week: number) => string | null
+
 const dash = <span className="text-stone-300">·</span>
+const th = 'px-2 py-1 text-[10px] font-medium uppercase tracking-wide text-stone-400'
 
 // Only weather that changes a kick is worth a badge. ESPN reports a condition for every game, so
 // flagging all of them puts "Partly sunny" on two thirds of the rows and buries the two that
@@ -38,16 +43,47 @@ const BAND = {
   bad: { cell: 'bg-red-100/60', opp: 'text-red-700/70', num: 'text-red-900' },
 }
 
-/** One week of a streamer's schedule: who they play and the number that matters. */
-function GameCell({ g, pos, lead }: { g: Streamer['weeks'][number] | undefined; pos: 'K' | 'DEF'; lead: boolean }) {
-  if (!g || !g.matchup) return <td className="px-2 py-1.5 text-center text-[11px] text-stone-300">bye</td>
+/** The number a week turns on: the opponent's implied total for a defence, the team's own for a
+ * kicker. Null on a bye or an unpriced game. */
+function basis(s: Streamer, pos: Pos, i: number): number | null {
+  const g = s.weeks[i]
+  if (!g?.matchup) return null
+  return pos === 'DEF' ? g.opp_implied : g.implied
+}
+const beats = (pos: Pos, a: number, b: number) => (pos === 'DEF' ? a < b : a > b)
+
+/** Rows ordered by one week's number, best first, byes and unpriced games last. The server orders
+ * by the first week; re-sorting here lets you plan a later week — on a Monday the first week is
+ * already played. Stable, so ties keep the server's order. */
+function sortBy(rows: Streamer[], pos: Pos, i: number): Streamer[] {
+  return [...rows].sort((a, b) => {
+    const x = basis(a, pos, i), y = basis(b, pos, i)
+    if (x == null || y == null) return x == null ? (y == null ? 0 : 1) : -1
+    return pos === 'DEF' ? x - y : y - x
+  })
+}
+
+const open = (st: Standing | undefined) => st?.status === 'free' || st?.status === 'waivers'
+const starting = (role: string) => !['BN', 'IR', 'TAXI'].includes(role)
+
+/** Yours in one league, starters first. */
+function mineIn(rows: Streamer[], leagueId: string): Streamer[] {
+  const role = (s: Streamer) => { const st = s.leagues[leagueId]; return st?.status === 'mine' ? st.role : '' }
+  return rows.filter((s) => s.leagues[leagueId]?.status === 'mine')
+    .sort((a, b) => Number(starting(role(b))) - Number(starting(role(a))))
+}
+
+/** One week of a unit's schedule: who they play and the number that matters. */
+function GameCell({ g, pos, lead }: { g: Streamer['weeks'][number] | undefined; pos: Pos; lead: boolean }) {
+  const ring = lead ? 'ring-1 ring-inset ring-stone-400' : ''
+  if (!g || !g.matchup) return <td className={`whitespace-nowrap px-2 py-1.5 text-center text-[11px] text-stone-300 ${ring}`}>bye</td>
   const v = pos === 'DEF' ? g.opp_implied : g.implied
   // A defence is graded on the band, which colours the cell. A kicker's cell is left plain and
   // only marks the offences priced to score — the kicker table is read down its own columns.
   const b = pos === 'DEF' ? band(v) : null
   const tone = b ? BAND[b] : null
   return (
-    <td className={`px-2 py-1.5 text-center ${tone?.cell ?? ''} ${lead ? 'ring-1 ring-inset ring-stone-300' : ''}`}>
+    <td className={`whitespace-nowrap px-2 py-1.5 text-center ${tone?.cell ?? ''} ${ring}`}>
       <div className={`text-[11px] ${tone?.opp ?? 'text-stone-600'}`}>{g.matchup}</div>
       <div className={`mt-0.5 text-[11px] tabular-nums ${tone?.num ?? (pos === 'K' && v != null && v >= 25 ? 'font-semibold text-emerald-700' : 'text-stone-400')}`}>
         {v == null ? '—' : fmt(v, 1)}
@@ -56,26 +92,194 @@ function GameCell({ g, pos, lead }: { g: Streamer['weeks'][number] | undefined; 
   )
 }
 
-function StreamTable({ pos, rows, weeks, onPlan }: { pos: 'K' | 'DEF'; rows: Streamer[]; weeks: number[]; onPlan?: (p: Player) => void }) {
-  if (!rows.length) return <p className="rounded-md border border-stone-200 bg-white p-3 text-[12px] text-stone-500">Nothing available at this position.</p>
-  const th = 'px-2 py-1 text-[10px] font-medium uppercase tracking-wide text-stone-400'
+function RolePill({ role }: { role: string }) {
+  return starting(role)
+    ? <span title="In your starting lineup" className="rounded bg-sky-600 px-1.5 py-0.5 text-[9.5px] font-bold leading-none text-white">START</span>
+    : <span title={role === 'BN' ? 'On your bench' : role} className="rounded border border-sky-300 bg-white px-1.5 py-0.5 text-[9.5px] font-bold leading-none text-sky-700">{role === 'BN' ? 'BENCH' : role}</span>
+}
+
+function LeagueName({ lg, className = '' }: { lg: StreamingLeague; className?: string }) {
+  return (
+    <span className={`flex items-stretch gap-1.5 ${className}`}>
+      <LeagueBar leagueId={lg.league_id} />
+      <span className="flex min-w-0 items-center gap-1.5">
+        <PlatformBadge platform={lg.platform} />
+        <span className="truncate">{lg.name}</span>
+      </span>
+    </span>
+  )
+}
+
+/** One unit's standing in one league — the cell that says where to go and get him, and the one
+ * you click to make him your pick there. Anything you could start is clickable: an open unit, or
+ * one of your own, which is how you record "keep what I have". */
+function StandingCell({ s, st, lg, pos, week, picked, onPick }: {
+  s: Streamer; st: Standing | undefined; lg: StreamingLeague; pos: Pos; week: number; picked: boolean; onPick: OnPick
+}) {
+  const base = `border-l border-stone-100 px-2 py-1.5 text-center ${picked ? 'bg-amber-100 ring-2 ring-inset ring-amber-400' : ''}`
+  const again = picked ? ` Your week ${week} pick here — click again to clear it.` : ` Click to make him your week ${week} pick here.`
+  if (!lg.slots[pos]) return <td className={base} title={`${lg.name} has no ${pos === 'K' ? 'kicker' : 'D/ST'} slot`}>{dash}</td>
+  if (!st) return <td className={base}>{dash}</td>
+  if (st.status === 'mine') {
+    return (
+      <td className={base}>
+        <button onClick={() => onPick(lg.league_id, s)} title={`Yours in ${lg.name}.${again}`} className="rounded hover:ring-2 hover:ring-amber-300">
+          <RolePill role={st.role} />
+        </button>
+      </td>
+    )
+  }
+  if (st.status === 'taken') {
+    return (
+      <td className={base} title={`Rostered by ${st.owner}`}>
+        <span className="mx-auto block max-w-[6rem] truncate text-[10.5px] text-stone-400">{st.owner}</span>
+      </td>
+    )
+  }
+  const w = st.status === 'waivers'
+  const tip = (w
+    ? `On waivers in ${lg.name}${st.until ? ` until ${shortDate(st.until)}` : ''} — a claim, not an instant add.`
+    : `Free agent in ${lg.name}.${lg.platform === 'sleeper' ? " Sleeper doesn't publish waiver status, so once his game kicks off he may sit on waivers until the next run." : ''}`) + again
+  return (
+    <td className={base}>
+      <button onClick={() => onPick(lg.league_id, s)} title={tip}
+              className={`rounded border px-1.5 py-0.5 text-[10.5px] font-semibold leading-none ${w
+                ? 'border-amber-300 bg-amber-50 text-amber-800 hover:bg-amber-100'
+                : 'border-emerald-300 bg-emerald-50 text-emerald-800 hover:bg-emerald-100'}`}>
+        {w ? 'W' : 'FA'}{w && st.until ? <span className="ml-1 font-normal">{new Date(st.until).toLocaleDateString(undefined, { weekday: 'short' })}</span> : null}
+      </button>
+    </td>
+  )
+}
+
+/** What you have at this position in every league, with the best thing still open there. */
+function Yours({ pos, rows, leagues, weeks, at, pickOf, onPick }: {
+  pos: Pos; rows: Streamer[]; leagues: StreamingLeague[]; weeks: number[]; at: number; pickOf: PickOf; onPick: OnPick
+}) {
+  const label = pos === 'K' ? 'kicker' : 'D/ST'
+  return (
+    <div className="overflow-x-auto rounded-md border border-stone-200 bg-white">
+      <table className="w-full min-w-[46rem] text-[12px]">
+        <thead className="border-b border-stone-200">
+          <tr>
+            <th className={`${th} text-left`}>League</th>
+            <th className={`${th} text-left`}>Yours</th>
+            {weeks.map((w, i) => <th key={w} className={`${th} text-center ${i === 0 ? 'border-l border-stone-100' : ''} ${i === at ? 'text-stone-700' : ''}`}>Wk {w}</th>)}
+            <th className={`${th} border-l border-stone-100 text-left`} title="The best unit still open in this league for the week you are sorting by, and how far it beats (▲) or trails (▼) the best of yours that week">
+              Best open · Wk {weeks[at]}
+            </th>
+          </tr>
+        </thead>
+        <tbody>
+          {leagues.map((lg) => {
+            const lead = <td className="py-1.5 pl-2 pr-3 align-top" rowSpan={1}><LeagueName lg={lg} className="max-w-[12rem] text-[12px] font-medium text-stone-800" /></td>
+            if (!lg.slots[pos]) {
+              return (
+                <tr key={lg.league_id} className="border-t border-stone-100">
+                  {lead}
+                  <td className="py-1.5 pr-3 text-[11px] text-stone-400" colSpan={weeks.length + 2}>No {label} slot in this league.</td>
+                </tr>
+              )
+            }
+            const mine = mineIn(rows, lg.league_id)
+            const best = rows.find((s) => open(s.leagues[lg.league_id]) && basis(s, pos, at) != null)
+            const vals = mine.map((s) => basis(s, pos, at)).filter((v): v is number => v != null)
+            const bar = vals.length ? vals.reduce((a, b) => (beats(pos, a, b) ? a : b)) : null
+            const bv = best ? basis(best, pos, at)! : null
+            const up = bv != null && (bar == null || beats(pos, bv, bar))
+            const delta = bv != null && bar != null ? Math.abs(bv - bar) : null
+            const bestSt = best?.leagues[lg.league_id]
+            const bestCell = (
+              <td className="border-l border-stone-100 py-1.5 pl-2 pr-3 align-top" rowSpan={Math.max(1, mine.length)}>
+                {!best ? <span className="text-[11px] text-stone-400">Nothing open with a game</span> : (
+                  <span className={`flex items-center gap-2 ${up ? '' : 'opacity-60'}`}>
+                    {pickOf(lg.league_id, pos, weeks[at]) === best.player_id
+                      ? <button onClick={() => onPick(lg.league_id, best)} title={`Your week ${weeks[at]} pick here — click to clear it`}
+                                className="rounded border border-amber-400 bg-amber-100 px-1.5 py-0.5 text-[10px] font-semibold text-amber-900">✓ Pick</button>
+                      : <button onClick={() => onPick(lg.league_id, best)} title={`Make this your week ${weeks[at]} pick in ${lg.name}`}
+                                className="rounded border border-stone-300 px-1.5 py-0.5 text-[10px] text-stone-700 hover:border-amber-400 hover:bg-amber-50">Pick</button>}
+                    <PlayerCell p={best} />
+                    <span className="text-[11px] text-stone-500">{best.weeks[at]?.matchup}</span>
+                    <span className={`rounded px-1 py-0.5 text-[11px] tabular-nums ${pos === 'DEF' && band(bv) ? `${BAND[band(bv)!].cell} ${BAND[band(bv)!].num}` : 'text-stone-700'}`}>{fmt(bv, 1)}</span>
+                    {delta != null && (up
+                      ? <span className="text-[11px] font-semibold text-emerald-700" title={`Better than your best this week by ${fmt(delta, 1)} implied points`}>▲{fmt(delta, 1)}</span>
+                      : <span className="text-[11px] text-stone-500" title={`Worse than yours this week by ${fmt(delta, 1)} implied points`}>▼{fmt(delta, 1)}</span>)}
+                    {bestSt?.status === 'waivers' && <span className="rounded bg-amber-100 px-1 py-0.5 text-[9.5px] font-semibold leading-none text-amber-800">W</span>}
+                  </span>
+                )}
+              </td>
+            )
+            if (!mine.length) {
+              return (
+                <tr key={lg.league_id} className="border-t border-stone-100">
+                  {lead}
+                  <td className="py-1.5 pr-3 text-[11px] font-medium text-amber-700">None rostered</td>
+                  <td colSpan={weeks.length} className="border-l border-stone-100" />
+                  {bestCell}
+                </tr>
+              )
+            }
+            return mine.map((s, n) => {
+              const st = s.leagues[lg.league_id]
+              return (
+                <tr key={`${lg.league_id}:${s.player_id}`} className={n === 0 ? 'border-t border-stone-100' : ''}>
+                  {n === 0 && <td className="py-1.5 pl-2 pr-3 align-top" rowSpan={mine.length}><LeagueName lg={lg} className="max-w-[12rem] text-[12px] font-medium text-stone-800" /></td>}
+                  <td className="whitespace-nowrap py-1.5 pr-3">
+                    <span className="inline-flex items-center gap-1.5">
+                      {st?.status === 'mine' && <RolePill role={st.role} />}
+                      <PlayerCell p={s} />
+                    </span>
+                  </td>
+                  {s.weeks.map((g, i) => <GameCell key={g.week} g={g} pos={pos} lead={i === at} />)}
+                  {n === 0 && bestCell}
+                </tr>
+              )
+            })
+          })}
+        </tbody>
+      </table>
+    </div>
+  )
+}
+
+/** Every unit at the position: its next four weeks, then where it stands in each league. */
+function Matrix({ pos, rows, leagues, weeks, at, setAt, pickOf, onPick }: {
+  pos: Pos; rows: Streamer[]; leagues: StreamingLeague[]; weeks: number[]; at: number; setAt: (i: number) => void; pickOf: PickOf; onPick: OnPick
+}) {
   const k = pos === 'K'
   return (
     <div className="overflow-x-auto rounded-md border border-stone-200 bg-white">
-      <table className="w-full min-w-[48rem] text-[12px]">
+      <table className="w-full min-w-[60rem] text-[12px]">
         <thead className="border-b border-stone-200">
           <tr>
             <th className={`${th} text-left`} rowSpan={2}>{k ? 'Kicker' : 'Defense'}</th>
             <th className={`${th} border-l border-stone-100 text-center`} colSpan={weeks.length}>
               {k ? 'Own team implied total — higher is better' : 'Opponent implied total — lower is better'}
             </th>
+            <th className={`${th} border-l border-stone-100 text-center`} colSpan={leagues.length}>Your leagues</th>
             <th className={`${th} border-l border-stone-100 text-center`} colSpan={2} title="FantasyPros expert consensus. Not part of the ordering — this table is ranked on Vegas alone, and where the two disagree is the thing to look at.">FantasyPros</th>
             {k && <th className={`${th} border-l border-stone-100 text-center`} colSpan={5}>Offense, season to date</th>}
-            <th className={`${th} text-right`} rowSpan={2}>Own%</th>
-            <th className="w-8" rowSpan={2} />
           </tr>
           <tr>
-            {weeks.map((w, i) => <th key={w} className={`${th} text-center ${i === 0 ? 'border-l border-stone-100' : ''}`}>Wk {w}</th>)}
+            {weeks.map((w, i) => (
+              <th key={w} className={`${th} text-center ${i === 0 ? 'border-l border-stone-100' : ''}`}>
+                <button onClick={() => setAt(i)} title={`Order by week ${w}`}
+                        className={`whitespace-nowrap rounded px-1.5 py-0.5 uppercase ${i === at ? 'bg-stone-900 text-white' : 'hover:bg-stone-100 hover:text-stone-700'}`}>
+                  Wk {w}{i === at ? ' ▾' : ''}
+                </button>
+              </th>
+            ))}
+            {leagues.map((lg) => (
+              <th key={lg.league_id} className="border-l border-stone-100 px-2 py-1 text-[10.5px] font-medium normal-case text-stone-600" title={lg.name}>
+                <span className="mx-auto flex max-w-[6.5rem] items-stretch gap-1.5 text-left">
+                  <LeagueBar leagueId={lg.league_id} />
+                  <span className="min-w-0">
+                    <PlatformBadge platform={lg.platform} />
+                    <span className="mt-0.5 block truncate">{lg.name}</span>
+                  </span>
+                </span>
+              </th>
+            ))}
             <th className={`${th} border-l border-stone-100 text-center`} title="Rank for this week only">Wk</th>
             <th className={`${th} text-center`} title="Rest-of-season rank — who is worth holding rather than who is best this Sunday">ROS</th>
             {k && <>
@@ -88,23 +292,27 @@ function StreamTable({ pos, rows, weeks, onPlan }: { pos: 'K' | 'DEF'; rows: Str
           </tr>
         </thead>
         <tbody>
-          {rows.map((s, i) => {
+          {rows.map((s) => {
             const f: TeamFactors | null = s.factors
             const wx = k ? adverse(s.weeks[0]?.weather) : null
+            // Out of reach everywhere and not yours: kept for the schedule context, but quiet.
+            const shut = !s.mine && !leagues.some((lg) => lg.slots[pos] && open(s.leagues[lg.league_id]))
             return (
-              <tr key={s.player_id} className={`border-t border-stone-100 ${s.mine ? 'bg-sky-50/40' : i === 0 ? 'bg-emerald-50/60' : ''}`}>
-                <td className={`py-1.5 pr-3 ${s.mine ? 'border-l-2 border-sky-500 pl-2.5' : 'pl-3'}`}>
+              <tr key={s.player_id} className={`border-t border-stone-100 ${s.mine ? 'bg-sky-50/40' : ''} ${shut ? 'opacity-45' : ''}`}>
+                <td className={`whitespace-nowrap py-1.5 pr-3 ${s.mine ? 'border-l-2 border-sky-500 pl-2.5' : 'pl-3'}`}>
                   <span className="inline-flex items-center gap-1.5">
-                    {i === 0 && <span className="rounded bg-emerald-600 px-1 py-0.5 text-[9px] font-bold leading-none text-white">1</span>}
                     <PlayerCell p={s} />
-                    {s.mine && <span title="Already on your roster — here as the bar anything you claim has to clear" className="rounded bg-sky-600 px-1 py-0.5 text-[9px] font-bold leading-none text-white">YOURS</span>}
                     {k && wx && (
                       <span title="Forecast for this week's game. ESPN publishes none for later weeks, and carries no wind — the one thing that most changes a kick."
                             className="rounded bg-amber-100 px-1 py-0.5 text-[9px] font-medium leading-none text-amber-800">{wx}</span>
                     )}
                   </span>
                 </td>
-                {s.weeks.map((g, n) => <GameCell key={g.week} g={g} pos={pos} lead={n === 0} />)}
+                {s.weeks.map((g, n) => <GameCell key={g.week} g={g} pos={pos} lead={n === at} />)}
+                {leagues.map((lg) => (
+                  <StandingCell key={lg.league_id} s={s} st={s.leagues[lg.league_id]} lg={lg} pos={pos} week={weeks[at]}
+                                picked={pickOf(lg.league_id, pos, weeks[at]) === s.player_id} onPick={onPick} />
+                ))}
                 <td className="border-l border-stone-100 px-2 py-1.5 text-center tabular-nums">
                   {s.fp_rank == null ? dash : <span className={s.fp_rank <= 5 ? 'font-semibold text-violet-800' : 'text-violet-700'}>{s.fp_rank}</span>}
                 </td>
@@ -128,10 +336,6 @@ function StreamTable({ pos, rows, weeks, onPlan }: { pos: 'K' | 'DEF'; rows: Str
                     {f?.fg_att_pg == null ? dash : <><span className={f.fg_att_pg >= 2.5 ? 'font-semibold text-emerald-700' : ''}>{fmt(f.fg_att_pg, 1)}</span><span className="ml-1 text-[10px] text-stone-400">({f.fg_att_short ?? 0}·{f.fg_att_long ?? 0})</span></>}
                   </td>
                 </>}
-                <td className="px-2 py-1.5 text-right text-stone-500">{pct(s.owned)}</td>
-                <td className="pr-2">
-                  {onPlan && !s.mine && <button onClick={() => onPlan(s)} className="rounded border border-stone-300 px-1.5 py-0.5 text-[10px] text-stone-700 hover:border-amber-400 hover:bg-amber-50">+</button>}
-                </td>
               </tr>
             )
           })}
@@ -141,82 +345,245 @@ function StreamTable({ pos, rows, weeks, onPlan }: { pos: 'K' | 'DEF'; rows: Str
   )
 }
 
-/** Kickers and defences, which are a different game from the rest of the waiver wire: almost no
- * week-to-week carryover, so you are picking a matchup rather than a player, and the good
- * matchups get claimed by whoever looks furthest ahead.
+/** What a pick asks of you, read off the rosters rather than stored: nothing (it is already in your
+ * lineup), a lineup change, an add or a claim, or a re-pick because someone else got there first. */
+function pickStatus(s: Streamer, leagueId: string, prev: Streamer | null): { label: string; tone: string; tip: string } {
+  const st = s.leagues[leagueId]
+  if (st?.status === 'mine') {
+    return starting(st.role)
+      ? { label: '✓ set', tone: 'bg-sky-600 text-white', tip: 'Yours and in your lineup — nothing to do.' }
+      : { label: 'start', tone: 'border border-sky-300 bg-white text-sky-700', tip: `Yours but ${st.role === 'BN' ? 'on your bench' : st.role} — put him in the lineup.` }
+  }
+  // Carried from an earlier week's pick you have not made yet: nothing new to do for this week.
+  if (prev?.player_id === s.player_id) return { label: 'keep', tone: 'bg-stone-100 text-stone-600', tip: 'Same as your pick the week before — no new move.' }
+  if (st?.status === 'free') return { label: 'add', tone: 'border border-emerald-300 bg-emerald-50 text-emerald-800', tip: 'Free agent — add him.' }
+  if (st?.status === 'waivers') {
+    return { label: 'claim', tone: 'border border-amber-300 bg-amber-50 text-amber-800', tip: `On waivers${st.until ? ` until ${shortDate(st.until)}` : ''} — put in a claim.` }
+  }
+  if (st?.status === 'taken') return { label: 'gone', tone: 'bg-red-100 text-red-800', tip: `Rostered by ${st.owner} now — pick someone else.` }
+  return { label: '?', tone: 'bg-stone-100 text-stone-500', tip: 'No longer in the table.' }
+}
+
+/** The planner: your pick for every league, at both positions, for each of the four weeks. Both
+ * positions at once, because this is the list you work through league by league when you go and
+ * make the moves, and a league's kicker and defence are made in the same sitting.
+ *
+ * A week without a pick shows, faintly, who you would have anyway — the latest earlier pick, or
+ * failing that the one on your roster now — so the grid always reads as "who I start each week". */
+function PickBoard({ data, at, setAt, pickOf, onClear }: {
+  data: StreamingResponse; at: number; setAt: (i: number) => void; pickOf: PickOf; onClear: (leagueId: string, pos: Pos, week: number) => void
+}) {
+  const { weeks, leagues } = data
+  const byId = useMemo(() => ({
+    DEF: new Map(data.DEF.map((s) => [s.player_id, s])),
+    K: new Map(data.K.map((s) => [s.player_id, s])),
+  }), [data])
+  const current = (lid: string, pos: Pos) => mineIn(data[pos], lid)[0] ?? null
+  const held = (lid: string, pos: Pos, i: number): Streamer | null => {
+    for (let j = i; j >= 0; j--) {
+      const id = pickOf(lid, pos, weeks[j])
+      if (id) return byId[pos].get(id) ?? null
+    }
+    return current(lid, pos)
+  }
+  const lines = leagues.flatMap((lg) => (['DEF', 'K'] as const).filter((pos) => lg.slots[pos]).map((pos) => ({ lg, pos })))
+  const count = lines.reduce((n, { lg, pos }) => n + (pickOf(lg.league_id, pos, weeks[at]) ? 1 : 0), 0)
+
+  return (
+    <div className="overflow-x-auto rounded-md border border-stone-200 bg-white">
+      <table className="w-full min-w-[52rem] text-[12px]">
+        <thead className="border-b border-stone-200">
+          <tr>
+            <th className={`${th} text-left`}>League</th>
+            <th className={`${th} text-left`} />
+            {weeks.map((w, i) => (
+              <th key={w} className={`${th} border-l border-stone-100 text-left`}>
+                <button onClick={() => setAt(i)} title={`Pick for week ${w}`}
+                        className={`whitespace-nowrap rounded px-1.5 py-0.5 uppercase ${i === at ? 'bg-stone-900 text-white' : 'hover:bg-stone-100 hover:text-stone-700'}`}>
+                  Wk {w}{i === at ? ` · ${count}/${lines.length} picked` : ''}
+                </button>
+              </th>
+            ))}
+          </tr>
+        </thead>
+        <tbody>
+          {lines.map(({ lg, pos }, n) => {
+            const first = n === 0 || lines[n - 1].lg !== lg
+            const span = lines.filter((l) => l.lg === lg).length
+            return (
+              <tr key={`${lg.league_id}:${pos}`} className={first ? 'border-t border-stone-200' : 'border-t border-stone-100'}>
+                {first && <td className="py-1.5 pl-2 pr-3 align-top" rowSpan={span}><LeagueName lg={lg} className="max-w-[12rem] text-[12px] font-medium text-stone-800" /></td>}
+                <td className="whitespace-nowrap pr-2 text-[10px] font-semibold uppercase tracking-wide text-stone-400">{pos === 'DEF' ? 'D/ST' : 'K'}</td>
+                {weeks.map((w, i) => {
+                  const id = pickOf(lg.league_id, pos, w)
+                  const cls = `border-l border-stone-100 px-2 py-1.5 align-top ${i === at ? 'bg-amber-50/60' : ''}`
+                  if (!id) {
+                    const h = held(lg.league_id, pos, i)
+                    return (
+                      <td key={w} className={cls} title={h ? `No pick for week ${w} — as things stand you would have ${h.name}` : `No pick for week ${w}`}>
+                        <span className="text-[11px] text-stone-300">{h ? h.name : '—'}</span>
+                      </td>
+                    )
+                  }
+                  const s = byId[pos].get(id)
+                  if (!s) {
+                    return (
+                      <td key={w} className={cls}>
+                        <span className="text-[11px] text-stone-500">{id}</span>
+                        <button onClick={() => onClear(lg.league_id, pos, w)} className="ml-1 text-stone-300 hover:text-red-600" title="Clear this pick">×</button>
+                      </td>
+                    )
+                  }
+                  const prev = i === 0 ? current(lg.league_id, pos) : held(lg.league_id, pos, i - 1)
+                  const status = pickStatus(s, lg.league_id, prev)
+                  const g = s.weeks[i]
+                  const v = basis(s, pos, i)
+                  const b = pos === 'DEF' ? band(v) : null
+                  const swap = (status.label === 'add' || status.label === 'claim') && prev && prev.player_id !== s.player_id
+                  return (
+                    <td key={w} className={cls}>
+                      <div className="flex items-center gap-1">
+                        <span className="truncate font-medium text-stone-900">{s.name}</span>
+                        <button onClick={() => onClear(lg.league_id, pos, w)} className="ml-auto px-0.5 text-stone-300 hover:text-red-600" title="Clear this pick">×</button>
+                      </div>
+                      <div className="mt-0.5 flex items-center gap-1.5 whitespace-nowrap text-[10.5px]">
+                        <span title={status.tip} className={`rounded px-1 py-0.5 text-[9.5px] font-bold uppercase leading-none ${status.tone}`}>{status.label}</span>
+                        <span className="text-stone-500">{g?.matchup ?? 'bye'}</span>
+                        {v != null && <span className={`rounded px-1 tabular-nums ${b ? `${BAND[b].cell} ${BAND[b].num}` : 'text-stone-700'}`}>{fmt(v, 1)}</span>}
+                      </div>
+                      {swap && <div className="mt-0.5 truncate text-[10px] text-stone-400">drop {prev!.name}</div>}
+                    </td>
+                  )
+                })}
+              </tr>
+            )
+          })}
+        </tbody>
+      </table>
+    </div>
+  )
+}
+
+/** Kickers and defences across every league at once, which is how streaming actually works: the
+ * same handful of good matchups is on offer everywhere, and the question is which of them is
+ * still open where. So the page leads with your picks and what you have in each league, and under
+ * them one table per position with a row per unit and a column per league.
  *
  * They get a tab each because they are not the same decision. A defence is a weekly matchup
  * play — you read the schedule and take the soft spot. A kicker is mostly a hold: his points
  * follow his offence's volume, not who it is playing, so the columns that matter are about the
  * offence rather than the opponent. */
 export default function Streaming() {
-  const { leagueId, league, openPlan } = useApp()
-  const [tab, setTab] = useState<'DEF' | 'K'>('DEF')
-  // Same query key as the waiver page, so the two share one fetch rather than each paying for it.
+  const qc = useQueryClient()
+  const [tab, setTab] = useState<Pos>('DEF')
+  const [at, setAt] = useState(0)
   const { data, isLoading, error } = useQuery({
-    queryKey: ['waivers', leagueId],
-    queryFn: () => api.waivers(leagueId!),
-    enabled: !!leagueId,
+    queryKey: ['streaming'],
+    queryFn: () => api.streaming(),
     staleTime: 60_000,
   })
-  if (!league) return <Spinner />
-  const onPlan = (p: Player) => leagueId && openPlan({ leagueId, add: p })
-  const weeks = data?.stream_weeks ?? []
-  const games = data?.streamers.K[0]?.factors?.games ?? null
+  const { data: picks } = useQuery({ queryKey: ['stream-picks'], queryFn: api.streamPicks })
+  const save = useMutation({
+    mutationFn: ({ player_id, ...key }: { league_id: string; position: Pos; week: number; player_id: string | null }) =>
+      player_id ? api.setStreamPick({ ...key, player_id }) : api.clearStreamPick(key),
+    onSuccess: (list) => qc.setQueryData(['stream-picks'], list),
+  })
+  const weeks = data?.weeks ?? []
+  const week = Math.min(at, Math.max(0, weeks.length - 1))
+  const sorted = useMemo(() => ({
+    DEF: data ? sortBy(data.DEF, 'DEF', week) : [],
+    K: data ? sortBy(data.K, 'K', week) : [],
+  }), [data, week])
+
+  const pickOf: PickOf = (leagueId, pos, w) =>
+    picks?.find((p) => p.league_id === leagueId && p.position === pos && p.week === w)?.player_id ?? null
+  // Clicking a unit makes it your pick for the week being viewed; clicking your current pick again
+  // clears it. One pick per league, position and week, so a new one replaces the old.
+  const onPick = (pos: Pos): OnPick => (leagueId, s) => {
+    const w = weeks[week]
+    save.mutate({ league_id: leagueId, position: pos, week: w, player_id: pickOf(leagueId, pos, w) === s.player_id ? null : s.player_id })
+  }
+  const onClear = (leagueId: string, pos: Pos, w: number) => save.mutate({ league_id: leagueId, position: pos, week: w, player_id: null })
+  // Leagues where something open beats everything you have at the position, for the tab badges.
+  const upgrades = (pos: Pos) => (data?.leagues ?? []).filter((lg) => {
+    if (!lg.slots[pos]) return false
+    const rows = sorted[pos]
+    const best = rows.find((s) => open(s.leagues[lg.league_id]) && basis(s, pos, week) != null)
+    if (!best) return false
+    const vals = mineIn(rows, lg.league_id).map((s) => basis(s, pos, week)).filter((v): v is number => v != null)
+    return !vals.length || vals.every((v) => beats(pos, basis(best, pos, week)!, v))
+  }).length
+  const games = data?.K.find((s) => s.factors?.games != null)?.factors?.games ?? null
 
   return (
     <div className="space-y-3">
       <div className="flex flex-wrap items-center gap-x-4 gap-y-2">
-        <h1 className="flex items-stretch gap-2 text-base font-semibold">
-          <LeagueBar leagueId={league.league_id} />
-          <span className="flex items-center gap-2"><PlatformBadge platform={league.platform} />Streaming · {league.name}</span>
-        </h1>
-        {weeks.length > 0 && <span className="ml-auto text-[12px] text-stone-500">Weeks {weeks.join(', ')} · free agents plus yours</span>}
+        <h1 className="text-base font-semibold">Streaming · all leagues</h1>
+        {weeks.length > 0 && <span className="ml-auto text-[12px] text-stone-500">Weeks {weeks.join(', ')} · every unit, and where it is open</span>}
       </div>
 
-      <div className="flex flex-wrap items-center gap-3">
-        <div className="flex rounded-md border border-stone-200 bg-white p-0.5">
-          {([['DEF', 'Defense / ST'], ['K', 'Kickers']] as const).map(([key, label]) => (
-            <button key={key} onClick={() => setTab(key)}
-                    className={`rounded px-3 py-1 text-[12px] ${tab === key ? 'bg-stone-900 text-white' : 'text-stone-700 hover:bg-stone-100'}`}>
-              {label}{data && <span className={`ml-1.5 ${tab === key ? 'text-stone-400' : 'text-stone-400'}`}>{data.streamers[key].length}</span>}
-            </button>
-          ))}
-        </div>
-      </div>
-
-      {isLoading && <Spinner label="Pulling lines for the next few weeks…" />}
+      {isLoading && <Spinner label="Pulling lines and rosters for every league…" />}
       {error && <ErrorBox error={error} />}
+      {save.error && <ErrorBox error={save.error} />}
 
-      {data && tab === 'DEF' && (
-        <div className="space-y-2">
-          <div className="flex flex-wrap items-center gap-x-3 gap-y-1 text-[12px] text-stone-500">
-            <span>
-              Ordered by this week's opponent implied total, lowest first — a defence scores off the other team failing.
-              The next {weeks.length} weeks run across each row so you can take a good matchup before someone else does.
-              Yours are in the table too, ranked by the same rule — they are the bar a claim has to clear.
-            </span>
-            <span className="flex items-center gap-1.5 text-[11px]">
-              <span className="rounded bg-emerald-100/70 px-1.5 py-0.5 font-semibold text-emerald-900">≤20.5 soft</span>
-              <span className="rounded bg-amber-100/60 px-1.5 py-0.5 text-amber-900">20.5–24.5</span>
-              <span className="rounded bg-red-100/60 px-1.5 py-0.5 text-red-900">≥24.5 avoid</span>
-            </span>
-          </div>
-          <StreamTable pos="DEF" rows={data.streamers.DEF} weeks={weeks} onPlan={onPlan} />
-        </div>
+      {data && (
+        <section className="space-y-1.5">
+          <h2 className="text-[12px] font-semibold uppercase tracking-wide text-stone-500">Your picks</h2>
+          <p className="text-[12px] text-stone-500">
+            Click a unit's <span className="font-semibold text-emerald-700">FA</span>, <span className="font-semibold text-amber-700">W</span> or
+            {' '}<span className="font-semibold text-sky-700">START</span> / bench cell in the tables below to make him your week {weeks[week]} pick in that league,
+            and again to clear it. Pick another week by clicking its header. Each pick says what it still takes — add, claim, start — and
+            turns to <span className="font-semibold text-sky-700">✓ set</span> by itself once you have made the move and he is in your lineup.
+          </p>
+          <PickBoard data={data} at={week} setAt={setAt} pickOf={pickOf} onClear={onClear} />
+        </section>
       )}
 
-      {data && tab === 'K' && (
-        <div className="space-y-2">
-          <p className="text-[12px] text-stone-500">
-            Ordered by the kicker's own team implied total, highest first. A kicker's points follow his offence's <em>volume</em> rather than
-            who it is playing, so the columns describe the offence: how often it stalls in the red zone instead of scoring, how well it sustains
-            drives, how often the staff takes the kick away on fourth down, and what all of that adds up to in attempts.
-            {games != null && <> Season to date — <span className="font-medium text-stone-600">{games} game{games === 1 ? '' : 's'}</span>, so read the rates as a first signal rather than a settled one.</>}
-            {' '}Free agents are limited to the kickers FantasyPros ranks this week, since a backup shares his starter's implied total exactly; yours is here either way.
-          </p>
-          <StreamTable pos="K" rows={data.streamers.K} weeks={weeks} onPlan={onPlan} />
+      <div className="flex flex-wrap items-center gap-3 pt-1">
+        <div className="flex rounded-md border border-stone-200 bg-white p-0.5">
+          {([['DEF', 'Defense / ST'], ['K', 'Kickers']] as const).map(([key, label]) => {
+            const n = data ? upgrades(key) : 0
+            return (
+              <button key={key} onClick={() => setTab(key)}
+                      className={`rounded px-3 py-1 text-[12px] ${tab === key ? 'bg-stone-900 text-white' : 'text-stone-700 hover:bg-stone-100'}`}>
+                {label}
+                {n > 0 && <span title={`${n} league${n === 1 ? '' : 's'} with something open that beats yours in week ${weeks[week]}`}
+                                className={`ml-1.5 ${tab === key ? 'text-emerald-300' : 'text-emerald-700'}`}>▲{n}</span>}
+              </button>
+            )
+          })}
         </div>
+        {tab === 'DEF' && (
+          <span className="flex items-center gap-1.5 text-[11px]">
+            <span className="rounded bg-emerald-100/70 px-1.5 py-0.5 font-semibold text-emerald-900">≤20.5 soft</span>
+            <span className="rounded bg-amber-100/60 px-1.5 py-0.5 text-amber-900">20.5–24.5</span>
+            <span className="rounded bg-red-100/60 px-1.5 py-0.5 text-red-900">≥24.5 avoid</span>
+          </span>
+        )}
+      </div>
+
+      {data && (
+        <>
+          <section className="space-y-1.5">
+            <h2 className="text-[12px] font-semibold uppercase tracking-wide text-stone-500">Yours, by league</h2>
+            <Yours pos={tab} rows={sorted[tab]} leagues={data.leagues} weeks={weeks} at={week} pickOf={pickOf} onPick={onPick(tab)} />
+          </section>
+
+          <section className="space-y-1.5">
+            <h2 className="text-[12px] font-semibold uppercase tracking-wide text-stone-500">{tab === 'K' ? 'Every kicker' : 'Every defense'}</h2>
+            <p className="text-[12px] text-stone-500">
+              {tab === 'DEF'
+                ? <>Ordered by the opponent's implied total in week {weeks[week]}, lowest first — a defence scores off the other team failing. Click a week to order by it instead.</>
+                : <>Ordered by the kicker's own team implied total in week {weeks[week]}, highest first — click a week to order by it instead. A kicker's points follow his offence's <em>volume</em> rather than who it is playing, so the right-hand columns describe the offence: how often it stalls in the red zone, how well it sustains drives, how often the staff takes the kick away on fourth down, and what that adds up to in attempts.
+                  {games != null && <> Season to date — <span className="font-medium text-stone-600">{games} game{games === 1 ? '' : 's'}</span>, so read the rates as a first signal.</>}
+                  {' '}Limited to the kickers FantasyPros ranks this week, plus yours.</>}
+              {' '}Each league column says whether he is yours (<span className="font-semibold text-sky-700">START</span> / bench), open
+              (<span className="font-semibold text-emerald-700">FA</span>, or <span className="font-semibold text-amber-700">W</span> on waivers), or whose he is;
+              your pick for the week is outlined in <span className="rounded bg-amber-100 px-1 font-semibold text-amber-900 ring-1 ring-amber-400">amber</span>. Rows open nowhere are faded.
+            </p>
+            <Matrix pos={tab} rows={sorted[tab]} leagues={data.leagues} weeks={weeks} at={week} setAt={setAt} pickOf={pickOf} onPick={onPick(tab)} />
+          </section>
+        </>
       )}
     </div>
   )

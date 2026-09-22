@@ -219,10 +219,11 @@ export interface TeamFactors {
   fg_att_pg: number | null
 }
 
-/** A K or D/ST with the next four weeks of matchups running across the row — the free agents,
- * plus the ones already on your roster so the comparison is on the page rather than in your head. */
+/** A K or D/ST with the next four weeks of matchups running across the row, and where it stands
+ * in each of your leagues. */
 export interface Streamer extends Player {
-  /** Already yours. Sorts by the same rule as everyone else; it is the benchmark, not an exception. */
+  /** Yours in at least one league. Sorts by the same rule as everyone else; it is the benchmark,
+   * not an exception. */
   mine: boolean
   weeks: StreamGame[]
   matchup: string | null
@@ -233,6 +234,39 @@ export interface Streamer extends Player {
   fp_rank: number | null
   fp_ros_rank: number | null
   factors: TeamFactors | null
+  /** Standing in each league, keyed by league id. */
+  leagues: Record<string, Standing>
+}
+
+/** Where one K or D/ST stands in one league. `role` is the slot he fills on your roster (K or DEF
+ * when starting, otherwise BN / IR / TAXI). `waivers` only ever comes from ESPN and Yahoo —
+ * Sleeper does not publish the split, so a Sleeper player off every roster is `free`. */
+export type Standing =
+  | { status: 'mine'; role: string }
+  | { status: 'taken'; owner: string }
+  | { status: 'waivers'; until: number | null }
+  | { status: 'free' }
+
+export interface StreamingLeague { league_id: string; name: string; platform: Platform; slots: { K: number; DEF: number } }
+
+/** The K or D/ST you want in one league for one week. Whether it still needs a move is not stored
+ * — the page reads that off the rosters each time, so a pick you have made shows as done. */
+export interface StreamPick {
+  league_id: string
+  position: 'K' | 'DEF'
+  week: number
+  player_id: string
+  season: string
+  updated_at: number
+}
+type PickKey = Pick<StreamPick, 'league_id' | 'position' | 'week'>
+
+export interface StreamingResponse {
+  week: number
+  weeks: number[]
+  leagues: StreamingLeague[]
+  DEF: Streamer[]
+  K: Streamer[]
 }
 
 export interface WaiversResponse {
@@ -247,8 +281,6 @@ export interface WaiversResponse {
   by_trending: Target[] | null
   movement: Movement | null
   pending: PendingClaim[]
-  streamers: { DEF: Streamer[]; K: Streamer[] }
-  stream_weeks: number[]
   articles: ArticleDigest | null
   players: Player[]
 }
@@ -324,6 +356,7 @@ export interface PlayerDetail {
   current_season: WeekRow[]
   previous_season: WeekRow[]
 }
+
 
 export type PlanStatus = 'planned' | 'done' | 'skipped'
 export interface Plan {
@@ -401,6 +434,10 @@ export interface GamesResponse {
 export const api = {
   me: () => http<Me>('/api/me'),
   waivers: (leagueId: string, week?: number) => http<WaiversResponse>(`/api/leagues/${leagueId}/waivers${q({ week })}`),
+  streaming: (week?: number) => http<StreamingResponse>(`/api/streaming${q({ week })}`),
+  streamPicks: () => http<StreamPick[]>('/api/stream-picks'),
+  setStreamPick: (body: PickKey & { player_id: string }) => http<StreamPick[]>('/api/stream-picks', { method: 'PUT', body: JSON.stringify(body) }),
+  clearStreamPick: (key: PickKey) => http<StreamPick[]>(`/api/stream-picks${q(key)}`, { method: 'DELETE' }),
   roster: (leagueId: string, week?: number) => http<RosterResponse>(`/api/leagues/${leagueId}/roster${q({ week })}`),
   rosters: (leagueId: string, week?: number) => http<RostersResponse>(`/api/leagues/${leagueId}/rosters${q({ week })}`),
   transactions: (leagueId: string, weeks = 3) => http<TransactionsResponse>(`/api/leagues/${leagueId}/transactions${q({ weeks })}`),

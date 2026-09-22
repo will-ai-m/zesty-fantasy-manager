@@ -822,16 +822,11 @@ class Service:
         The claimable pool is ordered three separate ways — by FantasyPros' waiver shortlist, by
         what players actually scored last week, and by the snap share and volume that lead
         scoring — so that where those disagree stays visible instead of averaging out.
-        `streamers` handles K and D/ST apart from all of it, on Vegas implied totals for the next
-        three weeks, because they are matchup plays rather than assets.
+        K and D/ST are left out: they are matchup plays rather than assets, and `streaming`
+        handles them across every league at once.
         """
         b = await self._league_bundle(league_id)
-        st = await self.state()
-        # Claims made now process into the *upcoming* week. Sleeper advances its `week` field
-        # once a slate is done while `display_week` can still read the week just played, so the
-        # later of the two is the week you are actually claiming into.
-        upcoming = max(int(st["current_week"]), int(st.get("week") or 0))
-        week = week or min(REGULAR_SEASON_WEEKS, upcoming)
+        week = week or self._claim_week(await self.state())
         ctx = await self._week_context(b, week)
         rostered = self._rostered(b)
         rows = [r for r in (self._enrich(ctx, pid) for pid in self._pool_ids(ctx)) if r and r["position"] in FANTASY_POSITIONS]
@@ -889,42 +884,6 @@ class Service:
             movers, movement = [], None
         by_trending = movers if movement else None
 
-        # Four weeks: the schedule runs across each streaming row, and a month is about as far
-        # as a claim made now is worth planning against.
-        odds_weeks = [w for w in range(week, min(REGULAR_SEASON_WEEKS, week + 3) + 1)]
-        odds_by_week = dict(zip(odds_weeks, await asyncio.gather(*(self._team_odds(season, w) for w in odds_weeks))))
-        # FantasyPros ranks K and D/ST one week at a time, so its weekly ranks are attached only
-        # to the week they cover. The weeks after that get its rest-of-season ranking for the
-        # position instead — a standing view of the unit, which is the right thing to read beside
-        # a line three weeks out, and honest about being a different measure (see `fp_basis`).
-        pending = await self._pending_claims(b, week)
-        fp_data, fp_idx = self._fp()
-        fp_week = ((fp_data or {}).get("sets", {}).get("weekly") or {}).get("week")
-        #
-        # Kickers are cut to the ones FantasyPros ranks for the week — its K page runs about one
-        # row per team, so being on it is the closest thing to a published starter list. Without
-        # that cut a backup inherits his starter's implied total and ranks alongside him, which
-        # is how a 0.1%-rostered practice-squad kicker ends up second on the list. Defences need
-        # no equivalent; there is only one per team.
-        fp_starters = {pid for pid, row in (fp_idx.get("weekly") or {}).items()
-                       if row.get("position") == "K"} or None
-        # Offensive efficiency for the kicker view — whether a team's points arrive as touchdowns
-        # or as field goals, which the implied total cannot tell you. Surfaced as columns, not
-        # folded into the ordering.
-        team_factors = await teamstats.load(self.s.cache, season)
-        streamers: dict[str, list[dict]] = {}
-        for pos in ("DEF", "K"):
-            # Free agents plus your own, so "is anything out there better than what I have"
-            # is one glance down a column rather than a comparison you carry in your head.
-            avail = [r for r in rows if r["position"] == pos
-                     and (r["player_id"] not in rostered or r["player_id"] in my_ids)]
-            ros_ranks = {pid: row["rank_ecr"]
-                         for pid, row in (fp_idx.get(fp.ROS_POSITION_SETS[pos]) or {}).items()
-                         if row.get("rank_ecr")}
-            streamers[pos] = wv.stream_table(
-                avail, pos, odds_by_week, odds_weeks, fp_week, ros_ranks,
-                fp_starters if pos == "K" else None, team_factors, my_ids)
-
         return {
             "league": lg,
             "week": week,
@@ -933,11 +892,127 @@ class Service:
             "by_production": by_production[:150],
             "by_trending": by_trending[:40] if by_trending is not None else None,
             "movement": movement,
-            "streamers": streamers,
-            "stream_weeks": odds_weeks,
-            "pending": pending,
+            "pending": await self._pending_claims(b, week),
             "articles": self._articles(season, week),
             "players": free,
+        }
+
+    @staticmethod
+    def _claim_week(st: dict) -> int:
+        """The week a claim made now processes into. Sleeper advances its `week` field once a
+        slate is done while `display_week` can still read the week just played, so the later of
+        the two is the week you are actually claiming into."""
+        return min(REGULAR_SEASON_WEEKS, max(int(st["current_week"]), int(st.get("week") or 0)))
+
+    @staticmethod
+    def _roles(b: dict) -> dict[str, str]:
+        """player_id -> where my roster has him: the starting slot he fills, else BN, IR or TAXI."""
+        r = b["my_roster"] or {}
+        slots = starting_slots(b["league"]["roster_positions"])
+        role_of: dict[str, str] = {}
+        for i, pid in enumerate(r.get("starters") or []):
+            if pid and pid != "0":
+                role_of[pid] = slots[i] if i < len(slots) else "START"
+        for pid in r.get("reserve") or []:
+            role_of[pid] = "IR"
+        for pid in r.get("taxi") or []:
+            role_of[pid] = "TAXI"
+        for pid in r.get("players") or []:
+            role_of.setdefault(pid, "BN")
+        return role_of
+
+    def _availability(self, b: dict, ctx: dict, rostered: dict[str, dict], roles: dict[str, str], pid: str) -> dict:
+        """Where one player stands in one league: mine (and in which slot), someone else's, or
+        claimable — split into free agent and waivers where the platform says which. Sleeper does
+        not publish that split, so a Sleeper player off every roster is simply `free`."""
+        r = rostered.get(pid)
+        mine = b["my_roster"]
+        if r is not None and mine is not None and r.get("roster_id") == mine.get("roster_id"):
+            return {"status": "mine", "role": roles.get(pid, "BN")}
+        if r is not None:
+            return {"status": "taken", "owner": self._owner(b, r)["team_name"]}
+        info = (ctx.get("espn") or ctx.get("yahoo") or {}).get(pid) or {}
+        if info.get("status") == "WAIVERS":
+            return {"status": "waivers", "until": info.get("waiver_until")}
+        return {"status": "free"}
+
+    async def streaming(self, week: int | None) -> dict:
+        """Kickers and defences across every league at once.
+
+        Streaming is one decision spread over several leagues: the same handful of good matchups
+        is on offer everywhere, and what differs is only which of them is still open where. So
+        this is one table per position with a row per unit — the next four weeks of lines across
+        it, then its standing in each league — rather than a table per league that leaves you
+        cross-referencing them. Ordering is Vegas alone, as `waivers.stream_table` describes;
+        which league it is available in never moves a row.
+
+        Every unit I roster anywhere is in the table whether or not anything else would put it
+        there, so the one I have is always on the page beside the ones I could have.
+        """
+        me = await self.me()
+        st = me["state"]
+        week = week or self._claim_week(st)
+        season = str(st["season"])
+        bundles = await self._all_bundles(me)
+        ctxs = await asyncio.gather(*(self._week_context(b, week) for b in bundles))
+
+        # Four weeks: the schedule runs across each row, and a month is about as far as a claim
+        # made now is worth planning against.
+        weeks = list(range(week, min(REGULAR_SEASON_WEEKS, week + 3) + 1))
+        odds_by_week = dict(zip(weeks, await asyncio.gather(*(self._team_odds(season, w) for w in weeks))))
+        fp_data, fp_idx = self._fp()
+        fp_week = ((fp_data or {}).get("sets", {}).get("weekly") or {}).get("week")
+        # Kickers are cut to the ones FantasyPros ranks for the week — its K page runs about one
+        # row per team, so being on it is the closest thing to a published starter list. Without
+        # that cut a backup inherits his starter's implied total and ranks alongside him, which
+        # is how a 0.1%-rostered practice-squad kicker ends up second on the list. Defences need
+        # no equivalent; there is only one per team.
+        k_starters = {pid for pid, row in (fp_idx.get("weekly") or {}).items() if row.get("position") == "K"} or None
+        # Offensive efficiency for the kicker view — whether a team's points arrive as touchdowns
+        # or as field goals, which the implied total cannot tell you. Columns, not ordering.
+        team_factors = await teamstats.load(self.s.cache, season)
+
+        # One row per unit, enriched from the first league that knows him. Sleeper leagues go
+        # first because their context is Sleeper's own; nothing on these rows is league-scored.
+        order = sorted(range(len(bundles)), key=lambda i: bundles[i]["league"].get("platform") != "sleeper")
+        rows: dict[str, dict] = {}
+        for i in order:
+            ctx = ctxs[i]
+            for pid in self._pool_ids(ctx):
+                if pid in rows or (ctx["players"].get(pid) or {}).get("position") not in ("K", "DEF"):
+                    continue
+                row = self._enrich(ctx, pid)
+                if row and row["position"] in ("K", "DEF"):
+                    rows[pid] = row
+
+        standing: dict[str, dict[str, dict]] = {}
+        my_ids: set[str] = set()
+        for b, ctx in zip(bundles, ctxs):
+            lid = b["league"]["league_id"]
+            rostered, roles = self._rostered(b), self._roles(b)
+            my_ids.update((b["my_roster"] or {}).get("players") or [])
+            for pid in rows:
+                standing.setdefault(pid, {})[lid] = self._availability(b, ctx, rostered, roles, pid)
+
+        tables: dict[str, list[dict]] = {}
+        for pos in ("DEF", "K"):
+            ros_ranks = {pid: row["rank_ecr"] for pid, row in (fp_idx.get(fp.ROS_POSITION_SETS[pos]) or {}).items()
+                         if row.get("rank_ecr")}
+            table = wv.stream_table([r for r in rows.values() if r["position"] == pos], pos, odds_by_week, weeks,
+                                    fp_week, ros_ranks, k_starters if pos == "K" else None, team_factors, my_ids)
+            tables[pos] = [{**r, "leagues": standing[r["player_id"]]} for r in table]
+
+        return {
+            "week": week,
+            "weeks": weeks,
+            "leagues": [{
+                "league_id": b["league"]["league_id"],
+                "name": b["league"]["name"],
+                "platform": b["league"].get("platform", "sleeper"),
+                "slots": {pos: b["league"]["roster_positions"].count(pos) for pos in ("K", "DEF")},
+            } for b in bundles],
+            "DEF": tables["DEF"],
+            "K": tables["K"],
         }
 
     def _roster_view(self, ctx: dict, b: dict, roster: dict) -> dict:
@@ -1112,16 +1187,7 @@ class Service:
             r = b["my_roster"]
             if not r:
                 continue
-            slots = starting_slots(b["league"]["roster_positions"])
-            starters = r.get("starters") or []
-            role_of: dict[str, str] = {}
-            for i, pid in enumerate(starters):
-                if pid and pid != "0":
-                    role_of[pid] = slots[i] if i < len(slots) else "START"
-            for pid in r.get("reserve") or []:
-                role_of[pid] = "IR"
-            for pid in r.get("taxi") or []:
-                role_of[pid] = "TAXI"
+            role_of = self._roles(b)
             for pid in r.get("players") or []:
                 e = self._enrich(ctx, pid)
                 if not e:
