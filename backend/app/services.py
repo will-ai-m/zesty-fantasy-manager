@@ -9,7 +9,7 @@ from typing import Any
 from zoneinfo import ZoneInfo
 
 from .config import DATA_DIR, ESPN_LEAGUE_IDS, ESPN_SWID, FANTASY_POSITIONS, OUT_STATUSES, \
-    YAHOO_LEAGUE_IDS, require_username
+    YAHOO_LEAGUE_IDS, ConfigError, require_username
 from . import fantasypros as fp
 from . import teamstats
 from .espn import Espn, normalize_league as espn_normalize_league, normalize_pool as espn_normalize_pool, \
@@ -129,8 +129,19 @@ class Service:
             self._xw = (id(players), Crosswalk(players, rows))
         return self._xw[1]
 
+    async def _sleeper_user(self) -> dict:
+        name = require_username()
+        user = await self.s.user(name)
+        if not user:
+            # Sleeper answers a bare `null` for an unknown name (usernames can be changed); drop it from the
+            # cache so a corrected .env takes effect without waiting out the day-long TTL.
+            self.s.cache.invalidate(f"user:{name}")
+            raise ConfigError(f"Sleeper has no user '{name}'. If you renamed your Sleeper account, set SLEEPER_USERNAME "
+                              "in .env to the new username, or to your numeric user id, which survives renames.")
+        return user
+
     async def me(self) -> dict:
-        user = await self.s.user(require_username())
+        user = await self._sleeper_user()
         st = await self.state()
         season = st["league_season"] if st.get("league_season") else st["season"]
         leagues = await self.s.user_leagues(user["user_id"], season)
@@ -174,7 +185,7 @@ class Service:
 
     async def _sleeper_bundle(self, league_id: str, user_id: str | None = None) -> dict:
         if user_id is None:
-            user_id = (await self.s.user(require_username()))["user_id"]
+            user_id = (await self._sleeper_user())["user_id"]
         league, rosters, users = await asyncio.gather(
             self.s.league(league_id), self.s.rosters(league_id), self.s.users(league_id)
         )
