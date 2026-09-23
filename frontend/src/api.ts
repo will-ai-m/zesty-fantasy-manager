@@ -338,6 +338,20 @@ export interface WaiverBoard {
   articles: ArticleDigest | null
 }
 
+/** A claim you mean to put in. `bid` and `drop_player_id` are optional — a plan is worth keeping
+ * before either is settled — and whether the player is still available is read off the pool each
+ * time, never stored. */
+export interface WaiverPlan {
+  league_id: string
+  week: number
+  player_id: string
+  bid: number | null
+  drop_player_id: string | null
+  season: string
+  updated_at: number
+}
+type PlanKey = Pick<WaiverPlan, 'league_id' | 'week' | 'player_id'>
+
 /** Every free agent in one league, for the Browse tab. */
 export interface WaiversResponse {
   league: LeagueSummary
@@ -478,6 +492,11 @@ export const api = {
   me: () => http<Me>('/api/me'),
   waivers: (leagueId: string, week?: number) => http<WaiversResponse>(`/api/leagues/${leagueId}/waivers${q({ week })}`),
   waiverBoard: (week?: number) => http<WaiverBoard>(`/api/waivers${q({ week })}`),
+  waiverPlans: () => http<WaiverPlan[]>('/api/waiver-plans'),
+  /** Only the fields you pass are changed: send a bid without a drop and the drop stays put. */
+  setWaiverPlan: (body: PlanKey & { bid?: number | null; drop_player_id?: string | null }) =>
+    http<WaiverPlan[]>('/api/waiver-plans', { method: 'PUT', body: JSON.stringify(body) }),
+  clearWaiverPlan: (key: PlanKey) => http<WaiverPlan[]>(`/api/waiver-plans${q(key)}`, { method: 'DELETE' }),
   streaming: (week?: number) => http<StreamingResponse>(`/api/streaming${q({ week })}`),
   streamPicks: () => http<StreamPick[]>('/api/stream-picks'),
   setStreamPick: (body: PickKey & { player_id: string }) => http<StreamPick[]>('/api/stream-picks', { method: 'PUT', body: JSON.stringify(body) }),

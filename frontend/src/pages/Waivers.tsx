@@ -1,6 +1,6 @@
 import { useEffect, useMemo, useState, type ReactNode } from 'react'
-import { useQuery } from '@tanstack/react-query'
-import { api, type ArticleDigest, type ArticleItem, type Platform, type Player, type Target, type WaiverLeague, type WaiverStanding } from '../api'
+import { useMutation, useQuery, useQueryClient } from '@tanstack/react-query'
+import { api, type ArticleDigest, type ArticleItem, type Platform, type Player, type Target, type WaiverLeague, type WaiverPlan, type WaiverStanding } from '../api'
 import { load, save } from '../lib/prefs'
 import { fmt, fmtInt, gameDayRowClass, OUT_STATUSES, pct, POS_ORDER, shortDate } from '../lib/format'
 import { useApp } from '../components/AppContext'
@@ -151,7 +151,9 @@ const shown = (p: Player, pos: string, hideOut: boolean) => fits(pos, p) && !(hi
 
 /** A target's standing in one league: whether you can have him there, what he would be worth
  * over the player of yours he would replace, and your claim on him if you have made one. */
-function StandingCell({ st, lg }: { st: WaiverStanding | undefined; lg: WaiverLeague }) {
+function StandingCell({ st, lg, planned, onPlan }: {
+  st: WaiverStanding | undefined; lg: WaiverLeague; planned: boolean; onPlan: () => void
+}) {
   if (!st) return dot
   if (st.status === 'mine') {
     const starting = !['BN', 'IR', 'TAXI'].includes(st.role)
@@ -165,9 +167,13 @@ function StandingCell({ st, lg }: { st: WaiverStanding | undefined; lg: WaiverLe
   const tip = `${w ? `On waivers in ${lg.name}${st.until ? ` until ${shortDate(st.until)}` : ''}` : `Free agent in ${lg.name}`}.`
     + (gain == null ? ' FantasyPros does not rank him rest of season.' : ` ${Math.abs(gain)} place${Math.abs(gain) === 1 ? '' : 's'} ${gain >= 0 ? 'above' : 'below'} the player of yours he would replace there (marked "weakest" on that roster), on FantasyPros' rest-of-season ranking.`)
     + (st.claimed ? ` You have a claim in${st.bid != null ? ` for $${st.bid}` : ''}.` : '')
+    + (planned ? ' Planned here — click to drop the plan.' : ' Click to plan this claim here.')
   return (
     <span title={tip} className="inline-flex items-center gap-1 whitespace-nowrap">
-      <span className={`rounded border px-1 py-0.5 text-[10px] font-semibold leading-none ${w ? 'border-amber-300 bg-amber-50 text-amber-800' : 'border-emerald-300 bg-emerald-50 text-emerald-800'}`}>{w ? 'W' : 'FA'}</span>
+      <button onClick={onPlan}
+              className={`rounded border px-1 py-0.5 text-[10px] font-semibold leading-none ${planned
+                ? 'border-amber-500 bg-amber-400 text-white'
+                : w ? 'border-amber-300 bg-amber-50 text-amber-800 hover:bg-amber-100' : 'border-emerald-300 bg-emerald-50 text-emerald-800 hover:bg-emerald-100'}`}>{w ? 'W' : 'FA'}</button>
       {gain != null && <span className={`text-[11px] tabular-nums ${gain > 0 ? 'font-semibold text-emerald-700' : 'text-stone-400'}`}>{gain > 0 ? '+' : ''}{gain}</span>}
       {st.claimed && <span className="rounded bg-sky-200 px-1 py-0.5 text-[9px] font-bold leading-none text-sky-900">{st.bid != null ? `$${st.bid}` : 'CLAIM'}</span>}
     </span>
@@ -184,7 +190,10 @@ function standingSort(st: WaiverStanding | undefined): number | null {
 /** The columns for a waiver-list or trends table: who he is, what FantasyPros thinks of him for
  * the rest of the season, what he did on the field last week, and where he is open. `lead` is
  * whatever orders the list — FantasyPros' rank, or a platform's movement numbers. */
-function targetColumns(lead: Column<Target>[], opts: { week: number; lastWeek: number; leagues: WaiverLeague[]; stars: Set<string>; onStar: (id: string) => void }): Column<Target>[] {
+function targetColumns(lead: Column<Target>[], opts: {
+  week: number; lastWeek: number; leagues: WaiverLeague[]; stars: Set<string>; onStar: (id: string) => void
+  planned: Set<string>; onPlan: (leagueId: string, playerId: string) => void
+}): Column<Target>[] {
   const lw = opts.lastWeek
   return [
     ...lead,
@@ -229,7 +238,10 @@ function targetColumns(lead: Column<Target>[], opts: { week: number; lastWeek: n
           <span className="min-w-0"><PlatformBadge platform={lg.platform} /><span className="mt-0.5 block truncate font-medium text-stone-600">{lg.name}</span></span>
         </span>
       ),
-      render: (t) => <StandingCell st={t.leagues[lg.league_id]} lg={lg} />,
+      render: (t) => (
+        <StandingCell st={t.leagues[lg.league_id]} lg={lg} planned={opts.planned.has(`${lg.league_id}|${t.player_id}`)}
+                      onPlan={() => opts.onPlan(lg.league_id, t.player_id)} />
+      ),
       sort: (t) => standingSort(t.leagues[lg.league_id]), align: 'center', desc: true,
     })),
   ]
@@ -272,29 +284,112 @@ const rowClassFor = (stars: Set<string>) => (t: Target) => {
   return `${gameDayRowClass(t)} ${open ? '' : 'opacity-45'}`
 }
 
-/** Claims you have already submitted, in every league — the first thing worth knowing on this
- * page: it stops you bidding twice and shows what each budget is committed to. Every platform
- * keeps claims private until they run, so these are only ever your own. */
+/** The claims you mean to put in, under your roster — where you can see the spots and the budget
+ * they have to fit. A claim is planned by clicking a league's FA or W cell in the tables; here it
+ * gets the two things a cell cannot hold: what you mean to bid, and who you would drop for him.
+ * Nothing is submitted anywhere — you make the move on the platform, and the row then says so. */
+function PlannerStrip({ leagues, plans, week, lookup, onSet, onClear }: {
+  leagues: WaiverLeague[]; plans: WaiverPlan[]; week: number; lookup: Map<string, Player>
+  onSet: (p: { league_id: string; player_id: string; bid?: number | null; drop_player_id?: string | null }) => void
+  onClear: (leagueId: string, playerId: string) => void
+}) {
+  const byLeague = leagues
+    .map((lg) => [lg, plans.filter((p) => p.league_id === lg.league_id)] as const)
+    .filter(([, rows]) => rows.length)
+  return (
+    <section className="shrink-0 rounded-md border border-amber-300 bg-amber-50/60">
+      <div className="flex items-baseline gap-2 border-b border-amber-200 px-3 py-2">
+        <h2 className="text-[12.5px] font-semibold text-stone-800">Waiver plan</h2>
+        <span className="text-[11px] text-stone-500">week {week}</span>
+      </div>
+      {!byLeague.length ? (
+        <p className="px-3 py-2 text-[11.5px] text-stone-500">Nothing planned. Click a league's <span className="font-semibold text-emerald-700">FA</span> or <span className="font-semibold text-amber-700">W</span> cell in the tables to plan a claim there.</p>
+      ) : (
+        <div className="divide-y divide-amber-200">
+          {byLeague.map(([lg, rows]) => {
+            const budget = lg.waiver.type_code === 2 ? lg.my_team?.faab_remaining ?? 0 : null
+            const spent = rows.reduce((n, p) => n + (p.bid ?? 0), 0)
+            const drops = [...lg.roster].sort((a, b) => (b.fp_ros_ecr ?? 9999) - (a.fp_ros_ecr ?? 9999))
+            return (
+              <div key={lg.league_id} className="px-3 py-2">
+                <div className="flex items-center gap-1.5 text-[11.5px]">
+                  <LeagueBar leagueId={lg.league_id} />
+                  <span className="min-w-0 truncate font-medium text-stone-800">{lg.name}</span>
+                  {budget != null && (
+                    <span className={`ml-auto shrink-0 rounded px-1 py-0.5 text-[10px] ${spent > budget ? 'bg-red-100 font-semibold text-red-800' : 'bg-white text-stone-600'}`}
+                          title={spent > budget ? 'More planned than you have left' : 'Planned of what you have left'}>${spent} / ${budget}</span>
+                  )}
+                </div>
+                <ul className="mt-1 space-y-1">
+                  {rows.map((p) => {
+                    const row = lg.roster.find((r) => r.player_id === p.player_id)
+                    const name = lookup.get(p.player_id)?.name ?? row?.name ?? p.player_id
+                    return (
+                      <li key={p.player_id} className="rounded border border-amber-200 bg-white px-1.5 py-1">
+                        <div className="flex items-center gap-1.5 text-[12px]">
+                          <span className="min-w-0 flex-1 truncate font-medium text-stone-800">{name}</span>
+                          {row && <span title="Already on your roster — this one is done" className="shrink-0 rounded bg-emerald-100 px-1 py-0.5 text-[9px] font-bold uppercase leading-none text-emerald-800">yours</span>}
+                          <button onClick={() => onClear(lg.league_id, p.player_id)} title="Drop this plan" className="shrink-0 px-0.5 text-stone-300 hover:text-red-600">×</button>
+                        </div>
+                        <div className="mt-1 flex items-center gap-1.5">
+                          {lg.waiver.type_code === 2 && (
+                            <label className="flex shrink-0 items-center gap-0.5 text-[10.5px] text-stone-500" title="What you mean to bid">
+                              $
+                              <input type="number" min={lg.waiver.bid_min} defaultValue={p.bid ?? ''} placeholder="—"
+                                     onBlur={(e) => onSet({ league_id: lg.league_id, player_id: p.player_id, bid: e.target.value === '' ? null : Number(e.target.value) })}
+                                     onKeyDown={(e) => { if (e.key === 'Enter') (e.target as HTMLInputElement).blur() }}
+                                     className="w-12 rounded border border-stone-300 px-1 py-0.5 text-[11.5px] tabular-nums text-stone-800" />
+                            </label>
+                          )}
+                          <select value={p.drop_player_id ?? ''} title="Who you would drop for him"
+                                  onChange={(e) => onSet({ league_id: lg.league_id, player_id: p.player_id, drop_player_id: e.target.value || null })}
+                                  className="min-w-0 flex-1 rounded border border-stone-300 bg-white px-1 py-0.5 text-[11px] text-stone-700">
+                            <option value="">{lg.spots.open > 0 ? 'no drop — open spot' : 'drop: nobody yet'}</option>
+                            {drops.map((r) => <option key={r.player_id} value={r.player_id}>drop {r.slot} {r.name} ({r.fp_ros_pos_rank ?? '—'})</option>)}
+                          </select>
+                        </div>
+                      </li>
+                    )
+                  })}
+                </ul>
+              </div>
+            )
+          })}
+        </div>
+      )}
+    </section>
+  )
+}
+
+/** Claims you have already submitted, under the roster with the plan: it stops you bidding twice
+ * and shows what each budget is already committed to. Every platform keeps claims private until
+ * they run, so these are only ever your own. */
 function PendingStrip({ leagues }: { leagues: WaiverLeague[] }) {
   const withClaims = leagues.filter((l) => l.pending.length)
   if (!withClaims.length) return null
   return (
-    <section className="rounded-md border border-sky-200 bg-sky-50/60 px-3 py-2">
-      <div className="flex items-baseline gap-3">
-        <h2 className="text-[12.5px] font-semibold text-stone-800">Your pending claims</h2>
-        <span className="ml-auto text-[11px] text-stone-400">already submitted — not a recommendation</span>
+    <section className="shrink-0 rounded-md border border-sky-200 bg-sky-50/60">
+      <div className="flex items-baseline gap-2 border-b border-sky-200 px-3 py-2">
+        <h2 className="text-[12.5px] font-semibold text-stone-800">Pending claims</h2>
+        <span className="text-[11px] text-stone-500">already submitted</span>
       </div>
-      <div className="mt-1.5 space-y-1">
+      <div className="divide-y divide-sky-200">
         {withClaims.map((lg) => (
-          <div key={lg.league_id} className="flex flex-wrap items-stretch gap-x-4 gap-y-1 text-[12px]">
-            <span className="flex w-40 shrink-0 items-stretch gap-1.5"><LeagueBar leagueId={lg.league_id} /><span className="truncate font-medium text-stone-700">{lg.name}</span></span>
-            {lg.pending.map((c, i) => (
-              <span key={`${c.player_id ?? c.name}-${i}`} className="flex items-baseline gap-1.5">
-                {c.priority != null && <span className="rounded bg-sky-200 px-1 py-0.5 text-[9.5px] font-bold leading-none text-sky-900">{c.priority}</span>}
-                <span className="font-medium text-stone-800">{c.name}</span>
-                {c.bid != null && <span className="font-semibold text-emerald-800">${c.bid}</span>}
-              </span>
-            ))}
+          <div key={lg.league_id} className="px-3 py-2">
+            <div className="flex items-center gap-1.5 text-[11.5px]">
+              <LeagueBar leagueId={lg.league_id} />
+              <span className="min-w-0 truncate font-medium text-stone-800">{lg.name}</span>
+              {lg.pending[0]?.runs_on && <span className="ml-auto shrink-0 text-[10px] text-stone-500">runs {lg.pending[0].runs_on}</span>}
+            </div>
+            <ul className="mt-1 space-y-0.5">
+              {lg.pending.map((c, i) => (
+                <li key={`${c.player_id ?? c.name}-${i}`} className="flex items-baseline gap-1.5 text-[12px]">
+                  {c.priority != null && <span className="shrink-0 rounded bg-sky-200 px-1 py-0.5 text-[9.5px] font-bold leading-none text-sky-900">{c.priority}</span>}
+                  <span className="min-w-0 flex-1 truncate font-medium text-stone-800">{c.name}</span>
+                  {c.bid != null && <span className="shrink-0 font-semibold text-emerald-800">${c.bid}</span>}
+                </li>
+              ))}
+            </ul>
           </div>
         ))}
       </div>
@@ -512,6 +607,13 @@ export default function Waivers() {
     enabled: !!leagueId && tab === 'browse',
     staleTime: 60_000,
   })
+  const qc = useQueryClient()
+  const { data: plans } = useQuery({ queryKey: ['waiver-plans'], queryFn: api.waiverPlans })
+  const savePlan = useMutation({
+    mutationFn: ({ clear, ...v }: { league_id: string; player_id: string; week: number; bid?: number | null; drop_player_id?: string | null; clear?: boolean }) =>
+      clear ? api.clearWaiverPlan({ league_id: v.league_id, player_id: v.player_id, week: v.week }) : api.setWaiverPlan(v),
+    onSuccess: (list) => qc.setQueryData(['waiver-plans'], list),
+  })
   const [pos, setPos] = useState('ALL')
   const [hideOut, setHideOut] = useState(false)
   const [trendKind, setTrendKind] = useState<Platform | null>(null)
@@ -540,10 +642,28 @@ export default function Waivers() {
   const trend = d?.trends.find((t) => t.kind === trendKind) ?? d?.trends[0] ?? null
   const trendRows = useMemo(() => (trend?.rows ?? []).filter((t) => shown(t, pos, hideOut)), [trend, pos, hideOut])
 
-  const fpCols = useMemo(() => targetColumns(FP_LEAD, { week: targetWeek, lastWeek, leagues: d?.leagues ?? [], stars, onStar }),
-    [targetWeek, lastWeek, d?.leagues, stars])  // onStar only ever sets state
-  const trendCols = useMemo(() => targetColumns(movementColumns(trend?.kind ?? 'sleeper'), { week: targetWeek, lastWeek, leagues: d?.leagues ?? [], stars, onStar }),
-    [trend?.kind, targetWeek, lastWeek, d?.leagues, stars])
+  // Planned claims are keyed by league and player: one plan per man per league per week.
+  const weekPlans = useMemo(() => (plans ?? []).filter((p) => p.week === targetWeek), [plans, targetWeek])
+  const plannedKeys = useMemo(() => new Set(weekPlans.map((p) => `${p.league_id}|${p.player_id}`)), [weekPlans])
+  const onPlanClaim = (league_id: string, player_id: string) => {
+    const has = plannedKeys.has(`${league_id}|${player_id}`)
+    const cur = weekPlans.find((p) => p.league_id === league_id && p.player_id === player_id)
+    savePlan.mutate({ league_id, player_id, week: targetWeek, clear: has, bid: cur?.bid, drop_player_id: cur?.drop_player_id })
+  }
+  // Every player the page can name, so a plan still reads as a name once he leaves the lists.
+  const lookup = useMemo(() => {
+    const m = new Map<string, Player>()
+    for (const t of d?.fantasypros ?? []) m.set(t.player_id, t)
+    for (const tr of d?.trends ?? []) for (const t of tr.rows) m.set(t.player_id, t)
+    for (const lg of d?.leagues ?? []) for (const r of lg.roster) m.set(r.player_id, r)
+    return m
+  }, [d])
+
+  const colOpts = { week: targetWeek, lastWeek, leagues: d?.leagues ?? [], stars, onStar, planned: plannedKeys, onPlan: onPlanClaim }
+  const fpCols = useMemo(() => targetColumns(FP_LEAD, colOpts),
+    [targetWeek, lastWeek, d?.leagues, stars, plannedKeys])  // the handlers only ever set state
+  const trendCols = useMemo(() => targetColumns(movementColumns(trend?.kind ?? 'sleeper'), colOpts),
+    [trend?.kind, targetWeek, lastWeek, d?.leagues, stars, plannedKeys])
 
   const browseRows = useMemo(() => {
     const q = search.trim().toLowerCase()
@@ -563,6 +683,10 @@ export default function Waivers() {
   const side = d && (
     <SideColumn>
       <RosterCard leagues={d.leagues} selected={rosterLeague} onSelect={setRosterLeague} week={targetWeek} />
+      <PendingStrip leagues={d.leagues} />
+      <PlannerStrip leagues={d.leagues} plans={weekPlans} week={targetWeek} lookup={lookup}
+                    onSet={(v) => savePlan.mutate({ ...v, week: targetWeek })}
+                    onClear={(league_id, player_id) => savePlan.mutate({ league_id, player_id, week: targetWeek, clear: true })} />
       {tab === 'list' && d.articles && <ArticleBlock digest={d.articles} />}
     </SideColumn>
   )
@@ -601,11 +725,11 @@ export default function Waivers() {
 
       {board.isLoading && <Spinner label="Reading every league's wire (rosters, usage, trends)…" />}
       {board.error && <ErrorBox error={board.error} />}
+      {savePlan.error && <ErrorBox error={savePlan.error} />}
 
       {d && tab === 'list' && (
         <div className="flex flex-col gap-3 lg:flex-row lg:items-start">
           <div className="min-w-0 flex-1 space-y-3">
-            <PendingStrip leagues={d.leagues} />
             <section className="space-y-1.5">
               <h2 className="text-[12px] font-semibold uppercase tracking-wide text-stone-500">FantasyPros waiver list <span className="font-normal normal-case text-stone-400">{fpRows.length}</span></h2>
               <p className="text-[12px] text-stone-500">

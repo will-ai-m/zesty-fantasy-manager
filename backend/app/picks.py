@@ -1,5 +1,6 @@
-"""Streaming picks: the K and D/ST you mean to start in each league, tracked in a JSON file.
-Every platform's public API is read-only here, so nothing in this module touches a league."""
+"""What you mean to do, in JSON files: the K and D/ST you want to start in each league, and the
+waiver claims you intend to put in. Every platform's public API is read-only here, so nothing in
+this module touches a league — the moves are yours to make, these are the notes."""
 from __future__ import annotations
 
 import asyncio
@@ -22,6 +23,23 @@ class PickIn(BaseModel):
 
 
 class Pick(PickIn):
+    season: str
+    updated_at: float
+
+
+class WaiverPlanIn(BaseModel):
+    """A claim you mean to put in: the player, in which league, for which week's run. `bid` is the
+    FAAB you plan to spend and `drop_player_id` who you would drop for him, both optional — a plan
+    is worth keeping before either is settled. Whether he is still available is read off the pool
+    each time it is shown, never stored."""
+    league_id: str
+    week: int = Field(ge=1, le=18)
+    player_id: str
+    bid: int | None = Field(default=None, ge=0)
+    drop_player_id: str | None = None
+
+
+class WaiverPlan(WaiverPlanIn):
     season: str
     updated_at: float
 
@@ -63,4 +81,36 @@ class PickStore(JsonStore):
     async def clear(self, season: str, league_id: str, position: str, week: int) -> None:
         async with self.lock:
             key = (season, league_id, position, week)
+            self._write([p for p in self._read() if self._key(p) != key])
+
+
+class WaiverPlanStore(JsonStore):
+    """Planned claims, at most one per league, week and player — planning the same man twice is
+    the same plan, so a second call updates the first rather than adding a row. Keyed by season
+    too, so next year starts empty."""
+
+    @staticmethod
+    def _key(p: dict) -> tuple:
+        return p["season"], p["league_id"], p["week"], p["player_id"]
+
+    async def list(self, season: str) -> list[WaiverPlan]:
+        async with self.lock:
+            return [WaiverPlan(**p) for p in self._read() if p["season"] == season]
+
+    async def set(self, season: str, data: WaiverPlanIn) -> None:
+        """Upsert, merging on the fields actually sent: a page that only changes the bid leaves
+        the drop alone, and vice versa, so two edits in flight cannot undo one another."""
+        async with self.lock:
+            sent = data.model_dump(exclude_unset=True)
+            rows = self._read()
+            plan = WaiverPlan(season=season, updated_at=time.time(), **data.model_dump()).model_dump()
+            key = self._key(plan)
+            existing = next((p for p in rows if self._key(p) == key), None)
+            if existing:
+                plan = {**existing, **sent, "updated_at": plan["updated_at"]}
+            self._write([p for p in rows if self._key(p) != key] + [plan])
+
+    async def clear(self, season: str, league_id: str, week: int, player_id: str) -> None:
+        async with self.lock:
+            key = (season, league_id, week, player_id)
             self._write([p for p in self._read() if self._key(p) != key])

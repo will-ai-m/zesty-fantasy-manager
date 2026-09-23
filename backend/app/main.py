@@ -14,7 +14,7 @@ from .espn import Espn
 from .yahoo import Yahoo
 from .odds import Odds
 from .weather import Weather
-from .picks import PickIn, PickStore
+from .picks import PickIn, PickStore, WaiverPlanIn, WaiverPlanStore
 from .services import Service
 from .sleeper import Sleeper
 
@@ -34,6 +34,7 @@ async def lifespan(app: FastAPI):
     weather = Weather(cache)
     app.state.service = Service(sleeper, espn, yahoo, odds, weather)
     app.state.picks = PickStore(DATA_DIR / "stream_picks.json")
+    app.state.waiver_plans = WaiverPlanStore(DATA_DIR / "waiver_plans.json")
     yield
     await app.state.odds.aclose()
     await weather.aclose()
@@ -156,3 +157,28 @@ async def set_pick(body: PickIn):
 async def clear_pick(league_id: str, position: Literal["K", "DEF"], week: int = Query(ge=1, le=18)):
     await app.state.picks.clear((await svc().state())["season"], league_id, position, week)
     return await _picks()
+
+
+# ---- waiver plans -------------------------------------------------------
+async def _waiver_plans() -> list[dict]:
+    season = (await svc().state())["season"]
+    return [p.model_dump() for p in await app.state.waiver_plans.list(season)]
+
+
+@app.get("/api/waiver-plans")
+async def list_waiver_plans():
+    return await _waiver_plans()
+
+
+@app.put("/api/waiver-plans")
+async def set_waiver_plan(body: WaiverPlanIn):
+    """Plan this claim, or update the bid or drop on one already planned. Answers with every plan
+    for the season, so the page can swap its copy in one step."""
+    await app.state.waiver_plans.set((await svc().state())["season"], body)
+    return await _waiver_plans()
+
+
+@app.delete("/api/waiver-plans")
+async def clear_waiver_plan(league_id: str, player_id: str, week: int = Query(ge=1, le=18)):
+    await app.state.waiver_plans.clear((await svc().state())["season"], league_id, week, player_id)
+    return await _waiver_plans()

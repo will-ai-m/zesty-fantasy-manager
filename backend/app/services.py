@@ -875,7 +875,7 @@ class Service:
                   if w and pos not in ("K", "DEF") and (w is flex_bar or len(by_pos[w["position"]]) > 1)}
         roles = self._roles(b)
         roster = [{**r, "slot": roles.get(pid, "BN"), "vs_mine_bar": pid in marked}
-                  for pid, r in rows.items() if r["position"] in FANTASY_POSITIONS and r["position"] not in ("K", "DEF")]
+                  for pid, r in rows.items() if r["position"] in FANTASY_POSITIONS]
 
         starting = starting_slots(positions)
         starters = my_roster.get("starters") or []
