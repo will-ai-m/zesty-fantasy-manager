@@ -352,6 +352,34 @@ export interface WaiverPlan {
 }
 type PlanKey = Pick<WaiverPlan, 'league_id' | 'week' | 'player_id'>
 
+/** A streaming pick that still needs a move, with the unit it would take the place of. */
+export interface PlanAdd extends Player {
+  standing: WaiverStanding
+  slot: 'K' | 'DEF'
+  replaces: RosterPlayer | null
+}
+
+export interface PlanClaim extends Player {
+  standing: WaiverStanding
+  bid: number | null
+  drop: Player | null
+}
+
+/** One league on the Plan page: where it stands, and what is left to do in it. */
+export interface PlanLeague {
+  league_id: string
+  name: string
+  platform: Platform
+  waiver: LeagueSummary['waiver']
+  my_team: LeagueSummary['my_team']
+  roster: RosterPlayer[]
+  spots: RosterSpots
+  adds: PlanAdd[]
+  claims: PlanClaim[]
+}
+
+export interface PlanResponse { week: number; leagues: PlanLeague[] }
+
 /** Every free agent in one league, for the Browse tab. */
 export interface WaiversResponse {
   league: LeagueSummary
@@ -492,6 +520,7 @@ export const api = {
   me: () => http<Me>('/api/me'),
   waivers: (leagueId: string, week?: number) => http<WaiversResponse>(`/api/leagues/${leagueId}/waivers${q({ week })}`),
   waiverBoard: (week?: number) => http<WaiverBoard>(`/api/waivers${q({ week })}`),
+  plan: (week?: number) => http<PlanResponse>(`/api/plan${q({ week })}`),
   waiverPlans: () => http<WaiverPlan[]>('/api/waiver-plans'),
   /** Only the fields you pass are changed: send a bid without a drop and the drop stays put. */
   setWaiverPlan: (body: PlanKey & { bid?: number | null; drop_player_id?: string | null }) =>

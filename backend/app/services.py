@@ -1002,6 +1002,66 @@ class Service:
             "articles": self._articles(season, week),
         }
 
+    async def plan(self, week: int | None, picks: list[dict], plans: list[dict]) -> dict:
+        """Everything you mean to do, league by league.
+
+        Three things side by side, because they are stages of the same question: the roster as it
+        stands, the streaming picks that still need a move — one already on the roster has nothing
+        left to do, so it is left out — and the claims you have planned, with the bid and the drop
+        you meant them to carry. Whether any of it is still on is read off the pool now rather
+        than from when you planned it, so a player somebody else has taken reads as gone.
+        """
+        me = await self.me()
+        week = week or self._claim_week(me["state"])
+        bundles = await self._all_bundles(me)
+        ctxs = await asyncio.gather(*(self._week_context(b, week) for b in bundles))
+
+        leagues = []
+        for b, ctx in zip(bundles, ctxs):
+            lid = b["league"]["league_id"]
+            side = self._my_side(b, ctx)
+            rostered, roles = self._rostered(b), self._roles(b)
+            summary = self._league_summary(b)
+
+            def entry(pid: str) -> dict | None:
+                r = self._enrich(ctx, pid)
+                if not r:
+                    return None
+                standing = self._availability(b, ctx, rostered, roles, pid)
+                if standing["status"] in ("free", "waivers"):
+                    standing["vs_mine"] = self._vs_mine(side["bars"], r)
+                return {**r, "standing": standing}
+
+            adds = []
+            for pick in picks:
+                if pick["league_id"] != lid or pick["week"] != week:
+                    continue
+                e = entry(pick["player_id"])
+                # Already yours: the pick is settled, and this page is about what is left to do.
+                if not e or e["standing"]["status"] == "mine":
+                    continue
+                held = [r for r in side["roster"] if r["position"] == pick["position"]]
+                held.sort(key=lambda r: r["slot"] != pick["position"])
+                adds.append({**e, "slot": pick["position"], "replaces": held[0] if held else None})
+
+            claims = []
+            for plan in plans:
+                if plan["league_id"] != lid or plan["week"] != week:
+                    continue
+                e = entry(plan["player_id"])
+                if not e:
+                    continue
+                drop = self._enrich(ctx, plan["drop_player_id"]) if plan.get("drop_player_id") else None
+                claims.append({**e, "bid": plan.get("bid"), "drop": drop})
+            claims.sort(key=lambda c: -(c["bid"] or 0))
+
+            leagues.append({
+                "league_id": lid, "name": summary["name"], "platform": summary["platform"],
+                "waiver": summary["waiver"], "my_team": summary["my_team"],
+                "roster": side["roster"], "spots": side["spots"], "adds": adds, "claims": claims,
+            })
+        return {"week": week, "leagues": leagues}
+
     async def _movers(self, kind: str, b: dict, ctx: dict, week: int) -> list[dict]:
         """Who is moving on one platform, QB/RB/WR/TE, most added first. Every player the platform
         reports, not just the ones free in this league — the league columns say where each is open."""

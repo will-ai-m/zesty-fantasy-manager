@@ -1,5 +1,6 @@
 from __future__ import annotations
 
+import asyncio
 from contextlib import asynccontextmanager
 from typing import Literal
 
@@ -87,6 +88,15 @@ async def waivers(league_id: str, week: int | None = Query(default=None, ge=1, l
 async def waiver_board(week: int | None = Query(default=None, ge=1, le=18)):
     """The waiver wire across every league: FantasyPros' list, the trends, and my rosters."""
     return await svc().waiver_board(week)
+
+
+@app.get("/api/plan")
+async def plan(week: int | None = Query(default=None, ge=1, le=18)):
+    """Everything you mean to do, league by league: your roster, the streaming units you still
+    have to add, and the claims you have planned."""
+    season = (await svc().state())["season"]
+    picks, plans = await asyncio.gather(app.state.picks.list(season), app.state.waiver_plans.list(season))
+    return await svc().plan(week, [p.model_dump() for p in picks], [p.model_dump() for p in plans])
 
 
 @app.get("/api/streaming")

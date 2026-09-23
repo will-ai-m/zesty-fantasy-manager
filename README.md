@@ -13,10 +13,14 @@ leagues and lets you pick your streamers; you make the actual moves on the platf
   platform's trends list (Sleeper adds/drops, ESPN ownership change, Yahoo transaction trends). Beside it,
   your roster in any league — with open spots, empty starting slots and IR — and your pending claims.
   **Browse all** is the full free-agent pool of the league picked in the sidebar.
-- **Streaming** — every K and D/ST with the next four weeks of Vegas lines, and where each one is yours,
+- **Streaming D/ST + K** — every K and D/ST with the next four weeks of Vegas lines, and where each one is yours,
   open or taken in every league at once. Click one to make it your pick for a league and week; the picks
   board says what each still takes (add, claim, start) and ticks itself off once it is in your lineup.
   Stored in `data/stream_picks.json`.
+- **Plan** — everything you mean to do, league by league: the roster as it stands, the streaming picks
+  that still need a move, and the claims planned on the waivers page with their bid and drop. Each row
+  says whether it is still outstanding, done, or gone to somebody else, worked out from the rosters now
+  rather than from when you planned it. Stored in `data/waiver_plans.json` and `data/stream_picks.json`.
 - **League** — your lineup by slot with bye/injury flags and an optimal-lineup suggestion (Hungarian
   assignment over projections), then standings with FAAB remaining and waiver order, every other roster
   (expandable), and recent transactions including winning FAAB bids. An **All leagues** toggle shows every
