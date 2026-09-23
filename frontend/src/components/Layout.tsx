@@ -10,7 +10,7 @@ import { load, save } from '../lib/prefs'
 
 const nav = [
   { to: '/waivers', label: 'Waivers' },
-  { to: '/streaming', label: 'Streaming' },
+  { to: '/streaming', label: 'Streaming D/ST + K' },
   { to: '/league', label: 'League' },
 ]
 

@@ -590,7 +590,7 @@ export default function Streaming() {
   return (
     <div className="space-y-3">
       <div className="flex flex-wrap items-center gap-x-4 gap-y-2">
-        <h1 className="text-base font-semibold">Streaming · all leagues</h1>
+        <h1 className="text-base font-semibold">Streaming D/ST + K · all leagues</h1>
         {weeks.length > 0 && <span className="ml-auto text-[12px] text-stone-500">Weeks {weeks.join(', ')} · every unit, and where it is open</span>}
       </div>
 
