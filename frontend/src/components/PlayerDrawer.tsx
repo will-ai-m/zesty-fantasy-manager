@@ -1,5 +1,5 @@
 import { useQuery } from '@tanstack/react-query'
-import { api, type DefenseMatchup, type FpDetail, type FpSet, type WeekRow } from '../api'
+import { api, type Matchup as MatchupData, type FpDetail, type FpSet, type MatchupGame, type WeekRow } from '../api'
 import { fmt } from '../lib/format'
 import { useApp } from './AppContext'
 import { ErrorBox, Injury, Pos, Spinner } from './Badges'
@@ -87,11 +87,31 @@ const ordinal = (n: number) => {
   return `${n}${end[(v - 20) % 10] ?? end[v] ?? end[0]}`
 }
 
-/** What a streamer actually asks of a defence is not how it has played but what the offence in
- * front of it has let other defences do. So this is the week's opponent read from the other
- * sideline: every defence that has faced them, what it scored, and what they did to it. An
- * offence near the top of the league here is the one worth streaming against. */
-function Matchup({ m, team }: { m: DefenseMatchup; team: string | null }) {
+// What each position's game against the opponent is worth showing: a defence by what the offence
+// did to it, a kicker by the kicks he got.
+const MATCHUP_COLS: Record<string, { key: keyof MatchupGame; label: string; title?: string; digits?: number }[]> = {
+  DEF: [
+    { key: 'pts_allow', label: 'PA', title: 'Points the offence scored', digits: 0 },
+    { key: 'yds_allow', label: 'YdsA', title: 'Yards the offence gained', digits: 0 },
+    { key: 'sack', label: 'Sck', digits: 0 }, { key: 'int', label: 'Int', digits: 0 },
+    { key: 'fum_rec', label: 'FR', digits: 0 }, { key: 'def_td', label: 'TD', digits: 0 },
+  ],
+  K: [
+    { key: 'fga', label: 'FGA', digits: 0 }, { key: 'fgm', label: 'FGM', digits: 0 },
+    { key: 'fgm_50p', label: '50+', title: 'Field goals made from 50 yards or more', digits: 0 },
+    { key: 'fgm_lng', label: 'Lng', title: 'Longest field goal made', digits: 0 },
+    { key: 'xpa', label: 'XPA', digits: 0 }, { key: 'xpm', label: 'XPM', digits: 0 },
+  ],
+}
+
+/** What a streamer actually asks of a defence or a kicker is not how it has played but what the
+ * team in front of it has let the rest of the league do. So this is the week's opponent read from
+ * the other sideline: every defence that has faced that offence, or every kicker that has faced
+ * that defence, and how each one did. An opponent near the top of the league here is the one
+ * worth streaming against. */
+function Matchup({ m, team }: { m: MatchupData; team: string | null }) {
+  const unit = m.position === 'K' ? 'kickers' : 'defences'
+  const cols = MATCHUP_COLS[m.position] ?? MATCHUP_COLS.DEF
   if (m.on_bye) {
     return (
       <section>
@@ -105,13 +125,13 @@ function Matchup({ m, team }: { m: DefenseMatchup; team: string | null }) {
   return (
     <section>
       <h3 className="mb-2 text-[12px] font-semibold uppercase tracking-wide text-stone-500">
-        How defences have done against {m.opponent} <span className="font-normal normal-case tracking-normal text-stone-400">· {team}'s week {m.week} matchup</span>
+        How {unit} have done against {m.opponent} <span className="font-normal normal-case tracking-normal text-stone-400">· {team}'s week {m.week} matchup</span>
       </h3>
       {m.avg_pts == null ? <p className="text-[13px] text-stone-600">{m.opponent} have not played yet this season.</p> : (
         <p className="text-[13px] text-stone-700">
-          {m.opponent} have handed defences <span className="font-semibold">{fmt(m.avg_pts)} points a game</span> —{' '}
+          {m.opponent} have handed {unit} <span className="font-semibold">{fmt(m.avg_pts)} points a game</span> —{' '}
           <span className={generous ? 'font-semibold text-emerald-700' : stingy ? 'text-red-700' : 'text-stone-600'}>
-            {m.rank === 1 ? 'the most of any offence' : `${ordinal(m.rank!)} most of ${m.teams}`}
+            {m.rank === 1 ? `the most of any ${m.position === 'K' ? 'defence' : 'offence'}` : `${ordinal(m.rank!)} most of ${m.teams}`}
           </span>
           <span className="text-stone-500"> · league average {fmt(m.league_avg)}</span>
         </p>
@@ -120,26 +140,20 @@ function Matchup({ m, team }: { m: DefenseMatchup; team: string | null }) {
         <table className="data mt-2 w-full border-collapse">
           <thead>
             <tr>
-              <th>Wk</th><th>Defense</th><th title="Where the game was played, from this offence's side">At</th>
-              <th className="text-right" title="Fantasy points that defence scored, in this league's scoring">Pts</th>
-              <th className="text-right" title={`Points ${m.opponent} scored`}>PA</th>
-              <th className="text-right" title={`Yards ${m.opponent} gained`}>YdsA</th>
-              <th className="text-right">Sck</th><th className="text-right">Int</th><th className="text-right">FR</th><th className="text-right">TD</th>
+              <th>Wk</th><th>{m.position === 'K' ? 'Kicker' : 'Defense'}</th>
+              <th title={`Where the game was played, from ${m.opponent}'s side`}>At</th>
+              <th className="text-right" title="Fantasy points scored, in this league's scoring">Pts</th>
+              {cols.map((c) => <th key={c.key} className="text-right" title={c.title}>{c.label}</th>)}
             </tr>
           </thead>
           <tbody>
             {m.games.map((g) => (
               <tr key={g.week}>
                 <td className="num">{g.week}</td>
-                <td className="font-medium">{g.defense}</td>
+                <td className="whitespace-nowrap font-medium">{m.position === 'K' ? <>{g.name} <span className="font-normal text-stone-500">{g.team}</span></> : g.team}</td>
                 <td className="text-stone-500">{g.at_home ? 'home' : 'away'}</td>
                 <td className={`num text-right font-semibold ${(g.pts ?? 0) >= 10 ? 'text-emerald-700' : ''}`}>{fmt(g.pts)}</td>
-                <td className="num text-right">{fmt(g.pts_allow, 0)}</td>
-                <td className="num text-right">{fmt(g.yds_allow, 0)}</td>
-                <td className="num text-right">{fmt(g.sack, 0)}</td>
-                <td className="num text-right">{fmt(g.int, 0)}</td>
-                <td className="num text-right">{fmt(g.fum_rec, 0)}</td>
-                <td className="num text-right">{fmt(g.def_td, 0)}</td>
+                {cols.map((c) => <td key={c.key} className="num text-right">{fmt(g[c.key] as number | null, c.digits ?? 1)}</td>)}
               </tr>
             ))}
           </tbody>
@@ -225,10 +239,14 @@ export function PlayerDrawer() {
               <h3 className="mb-2 text-[12px] font-semibold uppercase tracking-wide text-stone-500">{data.current_season[0]?.season ?? 'This season'} — projections and results</h3>
               <WeekTable rows={data.current_season} position={p?.position ?? 'WR'} showProj />
             </section>
-            <section>
-              <h3 className="mb-2 text-[12px] font-semibold uppercase tracking-wide text-stone-500">{data.previous_season[0]?.season ?? 'Last season'} — game log</h3>
-              {data.previous_season.length ? <WeekTable rows={data.previous_season} position={p?.position ?? 'WR'} showProj={false} /> : <div className="text-stone-500">No games last season.</div>}
-            </section>
+            {/* Last season is context for a player whose role can change; a kicker's is noise —
+                he kicks what his offence gives him, and that is this season's story. */}
+            {p?.position !== 'K' && (
+              <section>
+                <h3 className="mb-2 text-[12px] font-semibold uppercase tracking-wide text-stone-500">{data.previous_season[0]?.season ?? 'Last season'} — game log</h3>
+                {data.previous_season.length ? <WeekTable rows={data.previous_season} position={p?.position ?? 'WR'} showProj={false} /> : <div className="text-stone-500">No games last season.</div>}
+              </section>
+            )}
           </div>
         )}
       </aside>

@@ -657,6 +657,7 @@ export default function Streaming() {
                   {' '}A kicker's points follow his offence's <em>volume</em> rather than who it is playing, so the right-hand columns describe the offence: how often it stalls in the red zone, how well it sustains drives, how often the staff takes the kick away on fourth down, and what that adds up to in attempts.
                   {games != null && <> Season to date — <span className="font-medium text-stone-600">{games} game{games === 1 ? '' : 's'}</span>, so read the rates as a first signal.</>}
                   {' '}Limited to the kickers FantasyPros ranks this week, plus yours.
+                  {' '}Click a kicker's name for how kickers have fared against the defence he meets this week.
                   {' '}A number in <span className="border-b border-dotted border-current italic">dotted italics</span> is the offence's points per game this season, standing in for a week no book has priced yet.
                   {' '}Under each game: <span className="text-stone-600">⌂ dome</span> or <span className="text-stone-600">⌂ roof</span> (retractable) indoors, otherwise the forecast wind in mph, gusts, rain or snow and freezing temperatures —
                   {' '}<span className="text-amber-700">amber</span> from 12 mph wind or 22 mph gusts, <span className="font-semibold text-red-700">red</span> from 18 mph or 30 mph gusts. Forecasts appear within a week of kickoff.</>}

@@ -1379,22 +1379,24 @@ class Service:
         rows = sorted(merged.values(), key=lambda r: (-len(r["leagues"]), -(r.get("proj_ros") or 0)))
         return {"week": week, "leagues": [{"league_id": b["league"]["league_id"], "name": b["league"]["name"], "platform": b["league"].get("platform", "sleeper")} for b in bundles], "players": rows}
 
-    async def _defense_matchup(self, season: str, week: int, team: str, scoring: dict) -> dict | None:
-        """How defences have done against the offence this defence meets in `week`.
+    async def _matchup_history(self, season: str, week: int, team: str, scoring: dict, position: str) -> dict:
+        """How other units at this position have done against the team this one meets in `week`.
 
-        The question a streamer actually asks is not how this defence has played — it is what the
-        offence in front of it has allowed other defences to do. So this is the opponent's season
-        read from the other sideline: every defence that has faced them, what it scored, and what
-        the offence did to it. `rank` is over the 32 offences, 1 being the one that has handed
-        defences the most, which is the one worth streaming against.
+        The question a streamer actually asks is not how his own defence or kicker has played — it
+        is what the team in front of it has let the rest of the league do. So this is the week's
+        opponent read from the other sideline: every defence that has faced that offence, or every
+        kicker that has faced that defence, and how each one did. `rank` is over the 32 opponents,
+        1 being the one that has handed the position the most, which is the one worth streaming
+        against.
 
         Points are in the league's scoring where there is a league, half-PPR otherwise, the same
         rule the game logs beside this use.
         """
+        players = await self.s.players()
         _, opp, _sched = await self._schedule_maps(season)
         foe = _matchup_team(opp.get(week, {}).get(team))
         if not foe:
-            return {"week": week, "opponent": None, "on_bye": True, "games": [], "teams": 0}
+            return {"position": position, "week": week, "opponent": None, "on_bye": True, "games": [], "teams": 0}
 
         weeks = list(range(1, week))
         indexes = await asyncio.gather(*(self._stats_index(season, w, final=True) for w in weeks))
@@ -1402,29 +1404,49 @@ class Service:
         def points(st: dict) -> float | None:
             return score(st, scoring) if scoring else _f(st.get("pts_half_ppr"))
 
-        games, totals = [], {}
+        games: list[dict] = []
+        totals: dict[str, list[float]] = {}
         for w, idx in zip(weeks, indexes):
-            for defence, rec in idx.items():
+            for pid, rec in idx.items():
                 st = rec.get("stats") or {}
-                offence = _matchup_team(opp.get(w, {}).get(defence))
-                if not offence or not st.get("gp") or st.get("pts_allow") is None:
+                if not st.get("gp"):
+                    continue
+                if position == "DEF":
+                    # A defence's player_id is its team, and only a defence carries points allowed.
+                    own, name = pid, f"{pid} D/ST"
+                    if st.get("pts_allow") is None:
+                        continue
+                else:
+                    p = players.get(pid) or {}
+                    if p.get("position") != position:
+                        continue
+                    own, name = p.get("team"), p.get("full_name") or pid
+                faced = _matchup_team(opp.get(w, {}).get(own)) if own else None
+                if not faced:
                     continue
                 pts = points(st)
-                totals.setdefault(offence, []).append(pts or 0.0)
-                if offence != foe:
+                totals.setdefault(faced, []).append(pts or 0.0)
+                if faced != foe:
                     continue
-                games.append({
-                    "week": w, "defense": defence, "at_home": (opp.get(w, {}).get(foe) or "").startswith("vs"),
+                row = {
+                    "week": w, "player_id": pid, "name": name, "team": own,
+                    # Home and away are from the opponent's side: where this game was played for them.
+                    "at_home": (opp.get(w, {}).get(foe) or "").startswith("vs"),
                     "pts": round(pts, 2) if pts is not None else None,
-                    "pts_allow": _f(st.get("pts_allow")), "yds_allow": _f(st.get("yds_allow")),
-                    "sack": _f(st.get("sack")), "int": _f(st.get("int")), "fum_rec": _f(st.get("fum_rec")),
-                    "def_td": _f(st.get("def_td")),
-                })
+                }
+                if position == "DEF":
+                    row.update({"pts_allow": _f(st.get("pts_allow")), "yds_allow": _f(st.get("yds_allow")),
+                                "sack": _f(st.get("sack")), "int": _f(st.get("int")),
+                                "fum_rec": _f(st.get("fum_rec")), "def_td": _f(st.get("def_td"))})
+                else:
+                    row.update({"fga": _f(st.get("fga")), "fgm": _f(st.get("fgm")), "fgm_50p": _f(st.get("fgm_50p")),
+                                "fgm_lng": _f(st.get("fgm_lng")), "xpa": _f(st.get("xpa")), "xpm": _f(st.get("xpm"))})
+                games.append(row)
         games.sort(key=lambda g: g["week"])
         avg = {o: sum(v) / len(v) for o, v in totals.items() if v}
         order = sorted(avg, key=lambda o: -avg[o])
         return {
-            "week": week, "opponent": foe, "on_bye": False, "games": games,
+            "position": position, "week": week, "opponent": foe, "on_bye": False, "games": games,
             "avg_pts": round(avg[foe], 1) if foe in avg else None,
             "rank": order.index(foe) + 1 if foe in avg else None,
             "teams": len(order),
@@ -1474,7 +1496,8 @@ class Service:
                        "bye_week": byes.get(team) if team else None, "status": p.get("status")},
             "scoring_league_id": league_id,
             "fantasypros": self._fp_detail(player_id, p.get("position")),
-            "matchup": await self._defense_matchup(season, self._claim_week(st), team, scoring) if p.get("position") == "DEF" and team else None,
+            "matchup": await self._matchup_history(season, self._claim_week(st), team, scoring, p["position"])
+                       if p.get("position") in ("DEF", "K") and team else None,
             "current_season": week_rows(proj, stats, season, True),
             "previous_season": week_rows({}, prev_stats, prev_season, False),
         }

@@ -451,24 +451,35 @@ export interface WeekRow {
   proj: Record<string, number>
   stats: Record<string, number>
 }
-/** One past game against the offence a defence is about to meet: which defence played them, what
- * it scored, and what the offence did to it. */
+/** One past game against the team a defence or kicker is about to meet: who played them and how
+ * it went. The defensive fields are set for a defence, the kicking ones for a kicker. */
 export interface MatchupGame {
   week: number
-  defense: string
+  player_id: string
+  name: string
+  team: string | null
+  /** Where the game was played, from the opponent's side. */
   at_home: boolean
   pts: number | null
-  pts_allow: number | null
-  yds_allow: number | null
-  sack: number | null
-  int: number | null
-  fum_rec: number | null
-  def_td: number | null
+  pts_allow?: number | null
+  yds_allow?: number | null
+  sack?: number | null
+  int?: number | null
+  fum_rec?: number | null
+  def_td?: number | null
+  fga?: number | null
+  fgm?: number | null
+  fgm_50p?: number | null
+  fgm_lng?: number | null
+  xpa?: number | null
+  xpm?: number | null
 }
 
-/** How defences have fared against the offence this defence meets this week. `rank` is over the
- * 32 offences, 1 being the one that has handed defences the most. */
-export interface DefenseMatchup {
+/** How the rest of the league at this position has fared against the team this defence or kicker
+ * meets this week. `rank` is over the 32 opponents, 1 being the one that has handed the position
+ * the most — the one worth streaming against. */
+export interface Matchup {
+  position: 'DEF' | 'K'
   week: number
   opponent: string | null
   on_bye: boolean
@@ -481,8 +492,8 @@ export interface DefenseMatchup {
 
 export interface PlayerDetail {
   fantasypros: FpDetail | null
-  /** Defences only. */
-  matchup: DefenseMatchup | null
+  /** Defences and kickers only. */
+  matchup: Matchup | null
   player: {
     player_id: string; name: string; position: string | null; team: string | null; age: number | null; years_exp: number | null
     college: string | null; height: string | null; weight: string | null; number: number | null; injury_status: string | null
