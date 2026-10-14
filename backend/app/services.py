@@ -1379,6 +1379,58 @@ class Service:
         rows = sorted(merged.values(), key=lambda r: (-len(r["leagues"]), -(r.get("proj_ros") or 0)))
         return {"week": week, "leagues": [{"league_id": b["league"]["league_id"], "name": b["league"]["name"], "platform": b["league"].get("platform", "sleeper")} for b in bundles], "players": rows}
 
+    async def _defense_matchup(self, season: str, week: int, team: str, scoring: dict) -> dict | None:
+        """How defences have done against the offence this defence meets in `week`.
+
+        The question a streamer actually asks is not how this defence has played — it is what the
+        offence in front of it has allowed other defences to do. So this is the opponent's season
+        read from the other sideline: every defence that has faced them, what it scored, and what
+        the offence did to it. `rank` is over the 32 offences, 1 being the one that has handed
+        defences the most, which is the one worth streaming against.
+
+        Points are in the league's scoring where there is a league, half-PPR otherwise, the same
+        rule the game logs beside this use.
+        """
+        _, opp, _sched = await self._schedule_maps(season)
+        foe = _matchup_team(opp.get(week, {}).get(team))
+        if not foe:
+            return {"week": week, "opponent": None, "on_bye": True, "games": [], "teams": 0}
+
+        weeks = list(range(1, week))
+        indexes = await asyncio.gather(*(self._stats_index(season, w, final=True) for w in weeks))
+
+        def points(st: dict) -> float | None:
+            return score(st, scoring) if scoring else _f(st.get("pts_half_ppr"))
+
+        games, totals = [], {}
+        for w, idx in zip(weeks, indexes):
+            for defence, rec in idx.items():
+                st = rec.get("stats") or {}
+                offence = _matchup_team(opp.get(w, {}).get(defence))
+                if not offence or not st.get("gp") or st.get("pts_allow") is None:
+                    continue
+                pts = points(st)
+                totals.setdefault(offence, []).append(pts or 0.0)
+                if offence != foe:
+                    continue
+                games.append({
+                    "week": w, "defense": defence, "at_home": (opp.get(w, {}).get(foe) or "").startswith("vs"),
+                    "pts": round(pts, 2) if pts is not None else None,
+                    "pts_allow": _f(st.get("pts_allow")), "yds_allow": _f(st.get("yds_allow")),
+                    "sack": _f(st.get("sack")), "int": _f(st.get("int")), "fum_rec": _f(st.get("fum_rec")),
+                    "def_td": _f(st.get("def_td")),
+                })
+        games.sort(key=lambda g: g["week"])
+        avg = {o: sum(v) / len(v) for o, v in totals.items() if v}
+        order = sorted(avg, key=lambda o: -avg[o])
+        return {
+            "week": week, "opponent": foe, "on_bye": False, "games": games,
+            "avg_pts": round(avg[foe], 1) if foe in avg else None,
+            "rank": order.index(foe) + 1 if foe in avg else None,
+            "teams": len(order),
+            "league_avg": round(sum(avg.values()) / len(avg), 1) if avg else None,
+        }
+
     async def player_detail(self, player_id: str, league_id: str | None) -> dict:
         st = await self.state()
         season = st["season"]
@@ -1422,9 +1474,15 @@ class Service:
                        "bye_week": byes.get(team) if team else None, "status": p.get("status")},
             "scoring_league_id": league_id,
             "fantasypros": self._fp_detail(player_id, p.get("position")),
+            "matchup": await self._defense_matchup(season, self._claim_week(st), team, scoring) if p.get("position") == "DEF" and team else None,
             "current_season": week_rows(proj, stats, season, True),
             "previous_season": week_rows({}, prev_stats, prev_season, False),
         }
+
+
+def _matchup_team(label: str | None) -> str | None:
+    """'vs LAC' / '@ LAC' -> 'LAC'."""
+    return label.split()[-1] if label else None
 
 
 def _pts(settings: dict, key: str) -> float | None:

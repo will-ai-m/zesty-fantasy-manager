@@ -1,5 +1,5 @@
 import { useQuery } from '@tanstack/react-query'
-import { api, type FpDetail, type FpSet, type WeekRow } from '../api'
+import { api, type DefenseMatchup, type FpDetail, type FpSet, type WeekRow } from '../api'
 import { fmt } from '../lib/format'
 import { useApp } from './AppContext'
 import { ErrorBox, Injury, Pos, Spinner } from './Badges'
@@ -81,6 +81,74 @@ const STAT_COLS: Record<string, { key: string; label: string; digits?: number }[
 }
 STAT_COLS.TE = STAT_COLS.WR
 
+const ordinal = (n: number) => {
+  const end = ['th', 'st', 'nd', 'rd']
+  const v = n % 100
+  return `${n}${end[(v - 20) % 10] ?? end[v] ?? end[0]}`
+}
+
+/** What a streamer actually asks of a defence is not how it has played but what the offence in
+ * front of it has let other defences do. So this is the week's opponent read from the other
+ * sideline: every defence that has faced them, what it scored, and what they did to it. An
+ * offence near the top of the league here is the one worth streaming against. */
+function Matchup({ m, team }: { m: DefenseMatchup; team: string | null }) {
+  if (m.on_bye) {
+    return (
+      <section>
+        <h3 className="mb-2 text-[12px] font-semibold uppercase tracking-wide text-stone-500">Week {m.week} matchup</h3>
+        <p className="text-[13px] text-stone-600">{team ?? 'This defence'} is on bye in week {m.week}.</p>
+      </section>
+    )
+  }
+  const generous = m.rank != null && m.rank <= 8
+  const stingy = m.rank != null && m.rank > m.teams - 8
+  return (
+    <section>
+      <h3 className="mb-2 text-[12px] font-semibold uppercase tracking-wide text-stone-500">
+        How defences have done against {m.opponent} <span className="font-normal normal-case tracking-normal text-stone-400">· {team}'s week {m.week} matchup</span>
+      </h3>
+      {m.avg_pts == null ? <p className="text-[13px] text-stone-600">{m.opponent} have not played yet this season.</p> : (
+        <p className="text-[13px] text-stone-700">
+          {m.opponent} have handed defences <span className="font-semibold">{fmt(m.avg_pts)} points a game</span> —{' '}
+          <span className={generous ? 'font-semibold text-emerald-700' : stingy ? 'text-red-700' : 'text-stone-600'}>
+            {m.rank === 1 ? 'the most of any offence' : `${ordinal(m.rank!)} most of ${m.teams}`}
+          </span>
+          <span className="text-stone-500"> · league average {fmt(m.league_avg)}</span>
+        </p>
+      )}
+      {m.games.length > 0 && (
+        <table className="data mt-2 w-full border-collapse">
+          <thead>
+            <tr>
+              <th>Wk</th><th>Defense</th><th title="Where the game was played, from this offence's side">At</th>
+              <th className="text-right" title="Fantasy points that defence scored, in this league's scoring">Pts</th>
+              <th className="text-right" title={`Points ${m.opponent} scored`}>PA</th>
+              <th className="text-right" title={`Yards ${m.opponent} gained`}>YdsA</th>
+              <th className="text-right">Sck</th><th className="text-right">Int</th><th className="text-right">FR</th><th className="text-right">TD</th>
+            </tr>
+          </thead>
+          <tbody>
+            {m.games.map((g) => (
+              <tr key={g.week}>
+                <td className="num">{g.week}</td>
+                <td className="font-medium">{g.defense}</td>
+                <td className="text-stone-500">{g.at_home ? 'home' : 'away'}</td>
+                <td className={`num text-right font-semibold ${(g.pts ?? 0) >= 10 ? 'text-emerald-700' : ''}`}>{fmt(g.pts)}</td>
+                <td className="num text-right">{fmt(g.pts_allow, 0)}</td>
+                <td className="num text-right">{fmt(g.yds_allow, 0)}</td>
+                <td className="num text-right">{fmt(g.sack, 0)}</td>
+                <td className="num text-right">{fmt(g.int, 0)}</td>
+                <td className="num text-right">{fmt(g.fum_rec, 0)}</td>
+                <td className="num text-right">{fmt(g.def_td, 0)}</td>
+              </tr>
+            ))}
+          </tbody>
+        </table>
+      )}
+    </section>
+  )
+}
+
 function WeekTable({ rows, position, showProj }: { rows: WeekRow[]; position: string; showProj: boolean }) {
   const cols = STAT_COLS[position] ?? STAT_COLS.WR
   return (
@@ -151,6 +219,7 @@ export function PlayerDrawer() {
         {error && <ErrorBox error={error} />}
         {data && (
           <div className="space-y-6 p-4">
+            {data.matchup && <Matchup m={data.matchup} team={p?.team ?? null} />}
             {data.fantasypros && <FantasyPros fp={data.fantasypros} />}
             <section>
               <h3 className="mb-2 text-[12px] font-semibold uppercase tracking-wide text-stone-500">{data.current_season[0]?.season ?? 'This season'} — projections and results</h3>

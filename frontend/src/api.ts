@@ -451,8 +451,38 @@ export interface WeekRow {
   proj: Record<string, number>
   stats: Record<string, number>
 }
+/** One past game against the offence a defence is about to meet: which defence played them, what
+ * it scored, and what the offence did to it. */
+export interface MatchupGame {
+  week: number
+  defense: string
+  at_home: boolean
+  pts: number | null
+  pts_allow: number | null
+  yds_allow: number | null
+  sack: number | null
+  int: number | null
+  fum_rec: number | null
+  def_td: number | null
+}
+
+/** How defences have fared against the offence this defence meets this week. `rank` is over the
+ * 32 offences, 1 being the one that has handed defences the most. */
+export interface DefenseMatchup {
+  week: number
+  opponent: string | null
+  on_bye: boolean
+  games: MatchupGame[]
+  avg_pts: number | null
+  rank: number | null
+  teams: number
+  league_avg: number | null
+}
+
 export interface PlayerDetail {
   fantasypros: FpDetail | null
+  /** Defences only. */
+  matchup: DefenseMatchup | null
   player: {
     player_id: string; name: string; position: string | null; team: string | null; age: number | null; years_exp: number | null
     college: string | null; height: string | null; weight: string | null; number: number | null; injury_status: string | null
