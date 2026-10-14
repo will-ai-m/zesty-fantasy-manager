@@ -208,6 +208,11 @@ export interface StreamGame {
   matchup: string | null
   implied: number | null
   opp_implied: number | null
+  /** Season points per game, standing in for a week nobody has priced yet — the same scale an
+   * implied total is on. `estimated` is true when the number the table shows is one of these. */
+  implied_est: number | null
+  opp_implied_est: number | null
+  estimated: boolean
   weather: GameWeather | null
 }
 

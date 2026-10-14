@@ -126,16 +126,24 @@ def stream_table(rows: list[dict], position: str, odds_by_week: dict[int, dict[s
         schedule = []
         for w in weeks:
             g = (odds_by_week.get(w) or {}).get(team)
+            # `*_est` is the season's points per game, standing in for weeks nobody has priced
+            # yet. `estimated` says the number on show is one of those rather than a line.
+            implied = (g.get("implied") if g else None), (g.get("implied_est") if g else None)
+            opp = (g.get("opp_implied") if g else None), (g.get("opp_implied_est") if g else None)
+            shown = implied if position == "K" else opp
             schedule.append({
                 "week": w,
                 # No entry at all means no game that week — a bye, not an unpriced one.
                 "matchup": g.get("label") if g else None,
-                "implied": g.get("implied") if g else None,
-                "opp_implied": g.get("opp_implied") if g else None,
+                "implied": implied[0], "implied_est": implied[1],
+                "opp_implied": opp[0], "opp_implied_est": opp[1],
+                "estimated": shown[0] is None and shown[1] is not None,
                 "weather": g.get("weather") if g else None,
             })
         now = schedule[0]
-        basis = now["opp_implied"] if position == "DEF" else now["implied"]
+        basis = (now["opp_implied"] if position == "DEF" else now["implied"])
+        if basis is None:
+            basis = now["opp_implied_est"] if position == "DEF" else now["implied_est"]
         out.append({
             **r,
             "mine": is_mine,

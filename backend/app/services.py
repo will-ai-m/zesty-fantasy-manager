@@ -820,9 +820,9 @@ class Service:
             ai, hi = g.get("away_implied"), g.get("home_implied")
             wx = conditions.get(g.get("game_id"))
             if away:
-                out[away] = {"implied": ai, "opp_implied": hi, "label": f"@ {home}", "weather": wx}
+                out[away] = {"implied": ai, "opp_implied": hi, "label": f"@ {home}", "opp": home, "weather": wx}
             if home:
-                out[home] = {"implied": hi, "opp_implied": ai, "label": f"vs {away}", "weather": wx}
+                out[home] = {"implied": hi, "opp_implied": ai, "label": f"vs {away}", "opp": away, "weather": wx}
         return out
 
     def _ros_place(self, r: dict | None) -> int:
@@ -1149,6 +1149,16 @@ class Service:
         # Offensive efficiency for the kicker view — whether a team's points arrive as touchdowns
         # or as field goals, which the implied total cannot tell you. Columns, not ordering.
         team_factors = await teamstats.load(self.s.cache, season)
+        # Books price a week or two ahead and no further, so the weeks past that have a schedule
+        # but no line, and the table used to go blank there. Season points per game stands in:
+        # it is the same scale an implied total is on, so the bands still mean what they say,
+        # and it travels as its own field so the view can mark it and never pass it for a line.
+        for teams in odds_by_week.values():
+            for team, row in teams.items():
+                if row.get("implied") is None:
+                    row["implied_est"] = (team_factors.get(team) or {}).get("points_pg")
+                if row.get("opp_implied") is None:
+                    row["opp_implied_est"] = (team_factors.get(row.get("opp") or "") or {}).get("points_pg")
 
         # One row per unit, enriched from the first league that knows him. Sleeper leagues go
         # first because their context is Sleeper's own; nothing on these rows is league-scored.

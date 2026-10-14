@@ -81,11 +81,12 @@ const BAND = {
 }
 
 /** The number a week turns on: the opponent's implied total for a defence, the team's own for a
- * kicker. Null on a bye or an unpriced game. */
+ * kicker — or, for a week no book has priced yet, that team's points per game this season, which
+ * is the same scale and is marked as an estimate wherever it shows. Null on a bye. */
 function basis(s: Streamer, pos: Pos, i: number): number | null {
   const g = s.weeks[i]
   if (!g?.matchup) return null
-  return pos === 'DEF' ? g.opp_implied : g.implied
+  return pos === 'DEF' ? g.opp_implied ?? g.opp_implied_est : g.implied ?? g.implied_est
 }
 /** What orders the page: one week's Vegas number (the default), or FantasyPros' rank — for the
  * one week its K and D/ST pages cover, or for the rest of the season. */
@@ -138,7 +139,7 @@ function mineIn(rows: Streamer[], leagueId: string): Streamer[] {
 function GameCell({ g, pos, lead }: { g: Streamer['weeks'][number] | undefined; pos: Pos; lead: boolean }) {
   const ring = lead ? 'ring-1 ring-inset ring-stone-400' : ''
   if (!g || !g.matchup) return <td className={`whitespace-nowrap px-2 py-1.5 text-center text-[11px] text-stone-300 ${ring}`}>bye</td>
-  const v = pos === 'DEF' ? g.opp_implied : g.implied
+  const v = pos === 'DEF' ? g.opp_implied ?? g.opp_implied_est : g.implied ?? g.implied_est
   // A defence is graded on the band, which colours the cell. A kicker's cell is left plain and
   // only marks the offences priced to score — the kicker table is read down its own columns.
   const b = pos === 'DEF' ? band(v) : null
@@ -148,8 +149,9 @@ function GameCell({ g, pos, lead }: { g: Streamer['weeks'][number] | undefined; 
   return (
     <td className={`whitespace-nowrap px-2 py-1.5 text-center ${tone?.cell ?? ''} ${ring}`}>
       <div className={`text-[11px] ${tone?.opp ?? 'text-stone-600'}`}>{g.matchup}</div>
-      <div className={`mt-0.5 text-[11px] tabular-nums ${tone?.num ?? (pos === 'K' && v != null && v >= 25 ? 'font-semibold text-emerald-700' : 'text-stone-400')}`}>
-        {v == null ? '—' : fmt(v, 1)}
+      <div className={`mt-0.5 text-[11px] tabular-nums ${tone?.num ?? (pos === 'K' && v != null && v >= 25 ? 'font-semibold text-emerald-700' : 'text-stone-400')}`}
+           title={g.estimated ? `Nobody has priced week ${g.week} yet — this is ${pos === 'DEF' ? "the opponent's" : "the team's"} points per game this season, on the same scale as an implied total` : undefined}>
+        {v == null ? '—' : <span className={g.estimated ? 'border-b border-dotted border-current italic' : ''}>{fmt(v, 1)}</span>}
       </div>
       {kw && <div title={kw.tip} className={`mt-0.5 text-[9.5px] leading-tight ${kw.tone}`}>{kw.text}</div>}
       {ex && <div title={ex.tip} className="mt-1 leading-none"><span className="rounded bg-stone-800 px-1 py-0.5 text-[9px] font-bold uppercase text-white">{ex.text}</span></div>}
@@ -648,13 +650,14 @@ export default function Streaming() {
                 ? <>{order === 'week'
                     ? <>Ordered by the opponent's implied total in week {weeks[week]}, lowest first — a defence scores off the other team failing. Click a week to order by it instead, or the FantasyPros Wk / ROS headers to order by the experts.</>
                     : <>Ordered by {orderedBy}, best first — click a week to go back to ordering by the line.</>}
-                  A <span className="rounded bg-stone-800 px-1 text-[10px] font-bold uppercase text-white">dark tag</span> flags extreme weather in the forecast (20+ mph wind, 35+ mph gusts, snow or heavy rain) — ordinary weather is already in the line.</>
+                  A <span className="rounded bg-stone-800 px-1 text-[10px] font-bold uppercase text-white">dark tag</span> flags extreme weather in the forecast (20+ mph wind, 35+ mph gusts, snow or heavy rain) — ordinary weather is already in the line. A number in <span className="border-b border-dotted border-current italic text-stone-600">dotted italics</span> is not a line at all: books price a week or two ahead, so beyond that each cell falls back to the opponent's points per game this season.</>
                 : <>{order === 'week'
                     ? <>Ordered by the kicker's own team implied total in week {weeks[week]}, highest first — click a week to order by it instead, or the FantasyPros Wk / ROS headers to order by the experts.</>
                     : <>Ordered by {orderedBy}, best first — click a week to go back to ordering by the line.</>}
                   {' '}A kicker's points follow his offence's <em>volume</em> rather than who it is playing, so the right-hand columns describe the offence: how often it stalls in the red zone, how well it sustains drives, how often the staff takes the kick away on fourth down, and what that adds up to in attempts.
                   {games != null && <> Season to date — <span className="font-medium text-stone-600">{games} game{games === 1 ? '' : 's'}</span>, so read the rates as a first signal.</>}
                   {' '}Limited to the kickers FantasyPros ranks this week, plus yours.
+                  {' '}A number in <span className="border-b border-dotted border-current italic">dotted italics</span> is the offence's points per game this season, standing in for a week no book has priced yet.
                   {' '}Under each game: <span className="text-stone-600">⌂ dome</span> or <span className="text-stone-600">⌂ roof</span> (retractable) indoors, otherwise the forecast wind in mph, gusts, rain or snow and freezing temperatures —
                   {' '}<span className="text-amber-700">amber</span> from 12 mph wind or 22 mph gusts, <span className="font-semibold text-red-700">red</span> from 18 mph or 30 mph gusts. Forecasts appear within a week of kickoff.</>}
               {' '}Each league column says whether he is yours (<span className="font-semibold text-sky-700">START</span> / bench), open
