@@ -195,10 +195,10 @@ function WeekTable({ rows, position, showProj }: { rows: WeekRow[]; position: st
 }
 
 export function PlayerDrawer() {
-  const { drawerPlayer, closePlayer, leagueId, league } = useApp()
+  const { drawerPlayer, drawerLeague, setDrawerLeague, closePlayer, leagues } = useApp()
   const { data, isLoading, error } = useQuery({
-    queryKey: ['player', drawerPlayer, leagueId],
-    queryFn: () => api.player(drawerPlayer!, leagueId),
+    queryKey: ['player', drawerPlayer, drawerLeague],
+    queryFn: () => api.player(drawerPlayer!, drawerLeague),
     enabled: !!drawerPlayer,
   })
   if (!drawerPlayer) return null
@@ -223,7 +223,17 @@ export function PlayerDrawer() {
                   {p.bye_week ? ` · Bye ${p.bye_week}` : ''}
                 </div>
                 {p.injury_notes && <div className="mt-1 text-[12px] text-red-700">{p.injury_status}: {p.injury_body_part} — {p.injury_notes}</div>}
-                <div className="mt-1 text-[11px] text-stone-500">Points use {league?.name ?? 'Sleeper half-PPR'} scoring.</div>
+                {/* Scoring is the one thing on this panel that cannot be read off the player: the
+                    same game log is worth different points in each league, so the league says so
+                    and can be changed here. */}
+                <label className="mt-1 flex items-center gap-1.5 text-[11px] text-stone-500">
+                  Points in
+                  <select value={drawerLeague ?? ''} onChange={(e) => setDrawerLeague(e.target.value)}
+                          className="rounded border border-stone-200 bg-white px-1 py-0.5 text-[11px] text-stone-700">
+                    {leagues.map((l) => <option key={l.league_id} value={l.league_id}>{l.name}</option>)}
+                  </select>
+                  scoring
+                </label>
               </>
             ) : <h2 className="text-lg font-semibold">Player</h2>}
           </div>

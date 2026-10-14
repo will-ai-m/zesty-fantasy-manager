@@ -18,71 +18,54 @@ const nav = [
 const record = (t: NonNullable<LeagueSummary['my_team']>) =>
   `${t.wins}-${t.losses}${t.ties ? `-${t.ties}` : ''}`
 
-function LeagueButton({ league, active, collapsed, onSelect }: {
-  league: LeagueSummary
-  active: boolean
-  collapsed: boolean
-  onSelect: () => void
-}) {
+/** A league as the sidebar reports it: where you stand, what you have to spend, and when waivers
+ * run. It is a status panel, not a selector — the pages that are about one league (League, and
+ * Browse all on the waivers page) carry their own switcher, and everything else reads across all
+ * of them at once. */
+function LeagueStatus({ league, collapsed }: { league: LeagueSummary; collapsed: boolean }) {
   const t = league.my_team
-  const tip = league.error ?? [t?.team_name, `${league.scoring_format} · ${league.total_rosters} teams · ${league.waiver.type}`].filter(Boolean).join(' — ')
-  const tone = league.error
-    ? 'border-red-200 bg-red-50 text-red-700'
-    : active
-      ? 'border-amber-400 bg-amber-100 text-amber-900'
-      : 'border-transparent text-stone-700 hover:border-stone-200 hover:bg-stone-50'
+  const waiver = league.waiver.daily ? 'daily waivers' : league.waiver.day_of_week ? `waivers ${league.waiver.day_of_week}` : null
+  const tip = league.error ?? [t?.team_name, `${league.scoring_format} · ${league.total_rosters} teams · ${league.waiver.type}`, waiver].filter(Boolean).join(' — ')
+  const tone = league.error ? 'border-red-200 bg-red-50 text-red-700' : 'border-transparent text-stone-700'
 
   // Collapsed padding is minimal on purpose: at w-12 the platform badge already overflowed
   // before the bar existed, so the bar gets its 3px without costing more than a hair extra.
   if (collapsed) {
     return (
-      <button
-        onClick={onSelect}
-        disabled={!!league.error}
-        title={`${league.name} — ${tip}`}
-        className={`flex w-full items-stretch gap-1 rounded border px-0.5 py-1.5 ${tone}`}
-      >
+      <div title={`${league.name} — ${tip}`} className={`flex w-full items-stretch gap-1 rounded border px-0.5 py-1.5 ${tone}`}>
         <LeagueBar leagueId={league.league_id} />
-        <span className="flex flex-1 justify-center">
-          <PlatformBadge platform={league.platform} />
-        </span>
-      </button>
+        <span className="flex flex-1 justify-center"><PlatformBadge platform={league.platform} /></span>
+      </div>
     )
   }
   return (
-    <button
-      onClick={onSelect}
-      disabled={!!league.error}
-      title={tip}
-      className={`flex w-full items-stretch gap-1.5 rounded border py-1.5 pl-1.5 pr-2 text-left ${tone}`}
-    >
+    <div title={tip} className={`flex w-full items-stretch gap-1.5 rounded border py-1.5 pl-1.5 pr-2 text-left ${tone}`}>
       <LeagueBar leagueId={league.league_id} />
       <span className="min-w-0 flex-1">
         <span className="flex items-center gap-1.5">
           <PlatformBadge platform={league.platform} />
-          <span className={`truncate text-[12.5px] ${active ? 'font-semibold' : ''}`}>{league.name}</span>
+          <span className="truncate text-[12.5px]">{league.name}</span>
         </span>
         {league.error ? (
           <span className="mt-0.5 block truncate text-[10.5px]">{league.error}</span>
         ) : t ? (
           <>
-            {t.team_name && (
-              <span className={`mt-0.5 block truncate text-[11px] ${active ? 'text-amber-800' : 'text-stone-600'}`}>{t.team_name}</span>
-            )}
-            <span className="mt-0.5 flex items-center gap-1.5 text-[10.5px] text-stone-500">
+            {t.team_name && <span className="mt-0.5 block truncate text-[11px] text-stone-600">{t.team_name}</span>}
+            <span className="mt-0.5 flex flex-wrap items-center gap-x-1.5 text-[10.5px] text-stone-500">
               <span>{record(t)}</span>
               {league.waiver.type === 'FAAB' && <span>${t.faab_remaining}</span>}
               {t.waiver_position != null && <span>W#{t.waiver_position}</span>}
+              {waiver && <span className="text-stone-400">{league.waiver.daily ? 'daily' : league.waiver.day_of_week}</span>}
             </span>
           </>
         ) : null}
       </span>
-    </button>
+    </div>
   )
 }
 
 export function Layout() {
-  const { me, loading, error, leagues, erroredLeagues, leagueId, setLeagueId } = useApp()
+  const { me, loading, error, leagues, erroredLeagues } = useApp()
   const [collapsed, setCollapsed] = useState(() => load<boolean>('sidebarCollapsed', false))
   const qc = useQueryClient()
   const refresh = useMutation({
@@ -121,7 +104,7 @@ export function Layout() {
       <div className="flex flex-1 items-start">
         <aside className={`sticky top-10 max-h-[calc(100vh-2.5rem)] shrink-0 overflow-y-auto border-r border-stone-200 bg-white py-2 ${collapsed ? 'w-12 px-1.5' : 'w-52 px-2'}`}>
           <div className={`mb-1.5 flex items-center ${collapsed ? 'justify-center' : 'justify-between'}`}>
-            {!collapsed && <span className="text-[10.5px] font-semibold uppercase tracking-wide text-stone-400">Leagues</span>}
+            {!collapsed && <span className="text-[10.5px] font-semibold uppercase tracking-wide text-stone-400" title="Where each league stands. Pages that cover one league at a time have their own league switcher.">Leagues</span>}
             <button
               onClick={toggle}
               title={collapsed ? 'Expand leagues' : 'Collapse leagues'}
@@ -131,15 +114,7 @@ export function Layout() {
             </button>
           </div>
           <div className="flex flex-col gap-0.5">
-            {[...leagues, ...erroredLeagues].map((l) => (
-              <LeagueButton
-                key={l.league_id}
-                league={l}
-                active={l.league_id === leagueId}
-                collapsed={collapsed}
-                onSelect={() => setLeagueId(l.league_id)}
-              />
-            ))}
+            {[...leagues, ...erroredLeagues].map((l) => <LeagueStatus key={l.league_id} league={l} collapsed={collapsed} />)}
           </div>
           {!collapsed && <SidebarGames />}
         </aside>

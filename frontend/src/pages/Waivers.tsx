@@ -1,4 +1,4 @@
-import { useEffect, useMemo, useState, type ReactNode } from 'react'
+import { useMemo, useState, type ReactNode } from 'react'
 import { useMutation, useQuery, useQueryClient } from '@tanstack/react-query'
 import { api, type ArticleDigest, type ArticleItem, type Platform, type Player, type Target, type WaiverLeague, type WaiverPlan, type WaiverStanding } from '../api'
 import { load, save } from '../lib/prefs'
@@ -59,7 +59,7 @@ export const rosColumn: Column<Player> = {
   sort: (p) => p.fp_ros_ecr ?? 9999, align: 'right',
 }
 
-export function playerColumns(opts: { week: number; showRank?: boolean; vsMine?: boolean; espn?: boolean; fp?: boolean; fpWaiver?: boolean; usage?: number; owned?: boolean; livePts?: boolean; variant?: 'waiver' | 'lineup' }): Column<Player>[] {
+export function playerColumns(opts: { week: number; showRank?: boolean; vsMine?: boolean; espn?: boolean; fp?: boolean; fpWaiver?: boolean; usage?: number; owned?: boolean; livePts?: boolean; variant?: 'waiver' | 'lineup'; league?: string }): Column<Player>[] {
   // The market view is the waiver default, but a lineup can ask for ownership explicitly — on
   // your own roster it is not "should I add him" but "is the rest of the world starting him".
   const market = opts.owned ?? (opts.variant ?? 'waiver') === 'waiver'
@@ -68,7 +68,7 @@ export function playerColumns(opts: { week: number; showRank?: boolean; vsMine?:
       key: 'name', header: 'Player',
       render: (p) => (
         <span className="inline-flex items-center gap-1.5">
-          <PlayerCell p={p} />
+          <PlayerCell p={p} league={opts.league} />
           {opts.fpWaiver && p.fp_waiver_rank != null && (
             <span
               title={`FantasyPros waiver wire #${p.fp_waiver_rank}${p.fp_waiver_pos_rank ? ` (${p.fp_waiver_pos_rank})` : ''} — a shortlist of ~50 pickups`}
@@ -502,7 +502,7 @@ function RosterCard({ leagues, selected, onSelect, week }: { leagues: WaiverLeag
   const Row = ({ r }: { r: typeof lg.roster[number] }) => (
     <li className={`flex items-center gap-1.5 py-0.5 text-[12px] ${r.slot === 'IR' || r.slot === 'TAXI' ? 'opacity-70' : ''}`}>
       <span className="w-10 shrink-0"><Pos pos={r.slot} /></span>
-      <span className="min-w-0 flex-1 overflow-hidden whitespace-nowrap"><PlayerCell p={r} /></span>
+      <span className="min-w-0 flex-1 overflow-hidden whitespace-nowrap"><PlayerCell p={r} league={lg.league_id} /></span>
       {r.vs_mine_bar && (
         <span title={`The player "vs mine" measures a free agent against: your lowest FantasyPros rest-of-season rank among those a claim could replace — your worst ${r.position === 'QB' ? 'QB' : 'at a position, or your worst RB / WR / TE beyond the starters your lineup needs'}. IR and taxi aside.`}
               className="shrink-0 rounded bg-stone-100 px-1 py-0.5 text-[9px] font-semibold uppercase leading-none text-stone-500">weakest</span>
@@ -598,15 +598,21 @@ type Tab = 'list' | 'browse'
  * league you are looking at. Browse all is the whole free-agent pool of the league picked in the
  * sidebar, for anyone the lists do not reach. */
 export default function Waivers() {
-  const { leagueId, league, week } = useApp()
+  const { leagueId, setLeagueId, leagues, week } = useApp()
   const board = useQuery({ queryKey: ['waiver-board'], queryFn: () => api.waiverBoard(), staleTime: 60_000 })
   const [tab, setTab] = useState<Tab>('list')
+  // Browse is the one view here about a single league, so it follows the league the roster card
+  // is on — that card's tabs are the switcher, rather than a separate control somewhere else.
+  const [rosterLeague, setRosterLeague] = useState<string | null>(leagueId)
+  const browseLeague = rosterLeague ?? leagueId
   const browse = useQuery({
-    queryKey: ['waivers', leagueId],
-    queryFn: () => api.waivers(leagueId!),
-    enabled: !!leagueId && tab === 'browse',
+    queryKey: ['waivers', browseLeague],
+    queryFn: () => api.waivers(browseLeague!),
+    enabled: !!browseLeague && tab === 'browse',
     staleTime: 60_000,
   })
+  const pickLeague = (id: string) => { setRosterLeague(id); setLeagueId(id) }
+  const browsing = leagues.find((l) => l.league_id === browseLeague) ?? null
   const qc = useQueryClient()
   const { data: plans } = useQuery({ queryKey: ['waiver-plans'], queryFn: api.waiverPlans })
   const savePlan = useMutation({
@@ -626,9 +632,6 @@ export default function Waivers() {
     return next
   })
   const rowClass = useMemo(() => rowClassFor(stars), [stars])
-  // The roster follows the league picked in the sidebar until you switch it here.
-  const [rosterLeague, setRosterLeague] = useState<string | null>(leagueId)
-  useEffect(() => { if (leagueId) setRosterLeague(leagueId) }, [leagueId])
   // Browse filters.
   const [browsePos, setBrowsePos] = useState('ALL')
   const [search, setSearch] = useState('')
@@ -676,13 +679,14 @@ export default function Waivers() {
     })
   }, [browse.data, browsePos, hideOut, fpOnly, relevantOnly, search])
   const browseColumns = useMemo(() => playerColumns({
-    week: browse.data?.week ?? targetWeek, showRank: true, vsMine: true, espn: league?.platform === 'espn', fp: true, fpWaiver: true, usage: lastWeek,
-  }), [browse.data?.week, targetWeek, lastWeek, league?.platform])
+    week: browse.data?.week ?? targetWeek, showRank: true, vsMine: true, espn: browsing?.platform === 'espn', fp: true, fpWaiver: true, usage: lastWeek,
+    league: browseLeague ?? undefined,
+  }), [browse.data?.week, targetWeek, lastWeek, browsing?.platform, browseLeague])
 
   const meta = d?.fantasypros_meta
   const side = d && (
     <SideColumn>
-      <RosterCard leagues={d.leagues} selected={rosterLeague} onSelect={setRosterLeague} week={targetWeek} />
+      <RosterCard leagues={d.leagues} selected={browseLeague} onSelect={pickLeague} week={targetWeek} />
       <PendingStrip leagues={d.leagues} />
       <PlannerStrip leagues={d.leagues} plans={weekPlans} week={targetWeek} lookup={lookup}
                     onSet={(v) => savePlan.mutate({ ...v, week: targetWeek })}
@@ -702,7 +706,7 @@ export default function Waivers() {
 
       <div className="flex flex-wrap items-center gap-3">
         <div className="flex rounded-md border border-stone-200 bg-white p-0.5">
-          {([['list', 'Waiver list'], ['browse', `Browse all${league ? ` · ${league.name}` : ''}`]] as [Tab, string][]).map(([k, label]) => (
+          {([['list', 'Waiver list'], ['browse', `Browse all${browsing ? ` · ${browsing.name}` : ''}`]] as [Tab, string][]).map(([k, label]) => (
             <button key={k} onClick={() => setTab(k)} className={`rounded px-3 py-1 text-[12px] ${tab === k ? 'bg-stone-900 text-white' : 'text-stone-700 hover:bg-stone-100'}`}>{label}</button>
           ))}
         </div>

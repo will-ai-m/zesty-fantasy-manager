@@ -48,12 +48,18 @@ export function GameDay({ p }: { p: Pick<Player, 'playing_today' | 'game_status'
 }
 
 /** Player name cell: clickable name, team, injury badge, bye and game-day markers. */
-export function PlayerCell({ p, showPos = false }: { p: Pick<Player, 'player_id' | 'name' | 'team' | 'position' | 'injury_status' | 'injury_body_part' | 'on_bye' | 'playing_today' | 'game_status' | 'opponent'>; showPos?: boolean }) {
+export function PlayerCell({ p, showPos = false, league }: {
+  p: Pick<Player, 'player_id' | 'name' | 'team' | 'position' | 'injury_status' | 'injury_body_part' | 'on_bye' | 'playing_today' | 'game_status' | 'opponent'>
+  showPos?: boolean
+  /** Where this row belongs, when it belongs to one league: the drawer then scores in that
+   * league rather than in whichever one you looked at last. */
+  league?: string
+}) {
   const { openPlayer } = useApp()
   return (
     <span className="inline-flex items-center gap-1.5">
       {showPos && <Pos pos={p.position} />}
-      <button type="button" onClick={() => openPlayer(p.player_id)} className={`hover:text-amber-700 hover:underline text-left font-medium ${p.playing_today && p.game_status !== 'complete' ? 'text-sky-900' : 'text-stone-900'}`}>
+      <button type="button" onClick={() => openPlayer(p.player_id, league)} className={`hover:text-amber-700 hover:underline text-left font-medium ${p.playing_today && p.game_status !== 'complete' ? 'text-sky-900' : 'text-stone-900'}`}>
         {p.name}
       </button>
       <span className="text-stone-500 text-[11px]">{p.team ?? 'FA'}</span>

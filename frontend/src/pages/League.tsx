@@ -9,8 +9,8 @@ import { playerColumns, rosColumn } from './Waivers'
 
 type SlotRow = { slot: string; player: Player | null; key: string }
 
-function slotColumns(week: number): Column<SlotRow>[] {
-  const base = playerColumns({ week, fp: true, owned: true, livePts: true, variant: 'lineup' })
+function slotColumns(week: number, league: string): Column<SlotRow>[] {
+  const base = playerColumns({ week, fp: true, owned: true, livePts: true, variant: 'lineup', league })
   const wrapped: Column<SlotRow>[] = base.map((c) => ({
     ...c,
     render: (r) => (r.player ? c.render(r.player) : c.key === 'name' ? <span className="text-red-600">Empty</span> : null),
@@ -33,8 +33,8 @@ function TeamHeader({ r }: { r: RosterView }) {
   )
 }
 
-export function RosterDetail({ r, week }: { r: RosterView; week: number }) {
-  const cols = useMemo(() => slotColumns(week), [week])
+export function RosterDetail({ r, week, league }: { r: RosterView; week: number; league: string }) {
+  const cols = useMemo(() => slotColumns(week, league), [week, league])
   const starters: SlotRow[] = r.starters.map((s, i) => ({ slot: s.slot, player: s.player, key: `${s.slot}-${i}` }))
   const bench: SlotRow[] = r.bench.map((p) => ({ slot: 'BN', player: p, key: p.player_id }))
   const reserve: SlotRow[] = r.reserve.map((p) => ({ slot: 'IR', player: p, key: p.player_id }))
@@ -148,7 +148,7 @@ function TxRow({ t }: { t: Transaction }) {
  * it answers a different question ("how exposed am I to this player") but it is still about
  * your rosters, so it lives here rather than on a tab of its own. */
 export default function League() {
-  const { leagueId, league, week } = useApp()
+  const { leagueId, setLeagueId, league, leagues, week } = useApp()
   const [view, setView] = useState<'league' | 'all'>('league')
   const rosters = useQuery({ queryKey: ['rosters', leagueId, week], queryFn: () => api.rosters(leagueId!, week), enabled: !!leagueId && view === 'league', staleTime: 60_000 })
   const txs = useQuery({ queryKey: ['transactions', leagueId], queryFn: () => api.transactions(leagueId!, 3), enabled: !!leagueId && view === 'league', staleTime: 60_000 })
@@ -174,6 +174,17 @@ export default function League() {
             </>
           ) : 'My players across leagues'}
         </h1>
+        {view === 'league' && leagues.length > 1 && (
+          <div className="flex rounded-md border border-stone-200 bg-white p-0.5" title="Which league this page is about">
+            {leagues.map((l) => (
+              <button key={l.league_id} onClick={() => setLeagueId(l.league_id)} title={l.name}
+                      className={`flex min-w-0 items-stretch gap-1 rounded px-2 py-1 text-[12px] ${l.league_id === leagueId ? 'bg-stone-900 text-white' : 'text-stone-700 hover:bg-stone-100'}`}>
+                <LeagueBar leagueId={l.league_id} />
+                <span className="max-w-[9rem] truncate">{l.name}</span>
+              </button>
+            ))}
+          </div>
+        )}
         <div className="flex rounded-md border border-stone-200 bg-white p-0.5">
           <button onClick={() => setView('league')} className={`rounded px-2.5 py-1 text-[12px] ${view === 'league' ? 'bg-stone-900 text-white' : 'text-stone-700 hover:bg-stone-100'}`}>This league</button>
           <button onClick={() => setView('all')} className={`rounded px-2.5 py-1 text-[12px] ${view === 'all' ? 'bg-stone-900 text-white' : 'text-stone-700 hover:bg-stone-100'}`}>All leagues</button>
@@ -197,7 +208,7 @@ export default function League() {
             <section>
               <h2 className={h2}>Your team · week {week}</h2>
               {mine
-                ? <RosterDetail r={mine} week={week} />
+                ? <RosterDetail r={mine} week={week} league={league.league_id} />
                 : <div className="text-[12px] text-stone-500">You do not have a roster in this league.</div>}
             </section>
           )}
@@ -230,7 +241,7 @@ export default function League() {
                         {open === r.roster_id && !r.is_mine && (
                           <tr>
                             <td colSpan={10} className="bg-stone-50 p-3">
-                              <RosterDetail r={r} week={week} />
+                              <RosterDetail r={r} week={week} league={league.league_id} />
                             </td>
                           </tr>
                         )}

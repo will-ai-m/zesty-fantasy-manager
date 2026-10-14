@@ -27,13 +27,13 @@ function Panel({ title, count, hint, children }: { title: string; count?: number
 }
 
 /** One planned move: the player, what it still takes, and what it costs or replaces. */
-function Move({ row, note }: { row: PlanAdd | PlanClaim; note?: React.ReactNode }) {
+function Move({ row, note, league }: { row: PlanAdd | PlanClaim; note?: React.ReactNode; league: string }) {
   const s = status(row.standing)
   const gain = row.standing.status === 'free' || row.standing.status === 'waivers' ? row.standing.vs_mine : null
   return (
     <li className="flex flex-wrap items-center gap-1.5 py-0.5 text-[12px]">
       <span title={s.tip} className={`rounded px-1 py-0.5 text-[9px] font-bold uppercase leading-none ${s.tone}`}>{s.label}</span>
-      <PlayerCell p={row} showPos />
+      <PlayerCell p={row} showPos league={league} />
       {gain != null && (
         <span title="Places above the player of yours he would replace, on FantasyPros' rest-of-season ranking"
               className={`text-[11px] tabular-nums ${gain > 0 ? 'font-semibold text-emerald-700' : 'text-stone-400'}`}>{gain > 0 ? '+' : ''}{gain}</span>
@@ -56,7 +56,7 @@ function LeagueCard({ lg, week }: { lg: PlanLeague; week: number }) {
   const Row = ({ r }: { r: RosterPlayer }) => (
     <li className="flex items-center gap-1.5 py-0.5 text-[12px]">
       <span className="w-10 shrink-0"><Pos pos={r.slot} /></span>
-      <span className="min-w-0 flex-1 overflow-hidden whitespace-nowrap"><PlayerCell p={r} /></span>
+      <span className="min-w-0 flex-1 overflow-hidden whitespace-nowrap"><PlayerCell p={r} league={lg.league_id} /></span>
       <span className="w-9 shrink-0 text-right tabular-nums text-stone-500">{r.fp_ros_pos_rank ?? dot}</span>
     </li>
   )
@@ -91,7 +91,7 @@ function LeagueCard({ lg, week }: { lg: PlanLeague; week: number }) {
           {lg.adds.length === 0
             ? <p className="text-[11.5px] text-stone-400">Nothing to add — your picks are on the roster, or you have not made any.</p>
             : <ul>{lg.adds.map((a) => (
-                <Move key={a.player_id} row={a}
+                <Move key={a.player_id} row={a} league={lg.league_id}
                       note={a.replaces ? <span className="text-[11px] text-stone-400">over {a.replaces.name}</span>
                                        : <span className="text-[11px] text-stone-400">{lg.spots.empty_starts.includes(a.slot) ? `${a.slot} slot is empty` : `no ${a.slot} rostered`}</span>} />
               ))}</ul>}
@@ -101,7 +101,7 @@ function LeagueCard({ lg, week }: { lg: PlanLeague; week: number }) {
           {lg.claims.length === 0
             ? <p className="text-[11.5px] text-stone-400">No claims planned. Click a league's FA or W cell on the Waivers page.</p>
             : <ul>{lg.claims.map((c) => (
-                <Move key={c.player_id} row={c} note={
+                <Move key={c.player_id} row={c} league={lg.league_id} note={
                   <span className="flex items-center gap-1.5 text-[11px] text-stone-400">
                     {c.bid != null && <span className="font-semibold text-emerald-800">${c.bid}</span>}
                     {c.drop ? <span>drop {c.drop.name}</span> : lg.spots.open > 0 ? <span>into an open spot</span> : <span className="text-amber-700">needs a drop</span>}

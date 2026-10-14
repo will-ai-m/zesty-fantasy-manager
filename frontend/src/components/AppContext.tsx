@@ -18,7 +18,11 @@ interface AppState {
    * lib/leagueColors. */
   leagueColor: (leagueId: string) => string
   drawerPlayer: string | null
-  openPlayer: (playerId: string) => void
+  /** The league whose scoring the drawer reads in. Set when a player is opened from somewhere
+   * that belongs to one league; otherwise the last league you looked at. */
+  drawerLeague: string | null
+  openPlayer: (playerId: string, leagueId?: string) => void
+  setDrawerLeague: (leagueId: string) => void
   closePlayer: () => void
 }
 
@@ -27,7 +31,7 @@ const Ctx = createContext<AppState | null>(null)
 export function AppProvider({ children }: { children: ReactNode }) {
   const { data: me, isLoading, error } = useQuery({ queryKey: ['me'], queryFn: api.me, staleTime: 60_000 })
   const [leagueId, setLeagueIdState] = useState<string | null>(() => load<string | null>('leagueId', null))
-  const [drawerPlayer, setDrawerPlayer] = useState<string | null>(null)
+  const [drawer, setDrawer] = useState<{ playerId: string; leagueId: string | null } | null>(null)
 
   const leagues = useMemo(() => (me?.leagues ?? []).filter((l) => !l.error), [me])
   const erroredLeagues = useMemo(() => (me?.leagues ?? []).filter((l) => !!l.error), [me])
@@ -61,10 +65,12 @@ export function AppProvider({ children }: { children: ReactNode }) {
     setLeagueId,
     week: me?.state.current_week ?? 1,
     leagueColor,
-    drawerPlayer,
-    openPlayer: setDrawerPlayer,
-    closePlayer: () => setDrawerPlayer(null),
-  }), [me, isLoading, error, leagues, erroredLeagues, leagueId, setLeagueId, leagueColor, drawerPlayer])
+    drawerPlayer: drawer?.playerId ?? null,
+    drawerLeague: drawer?.leagueId ?? leagueId,
+    openPlayer: (playerId: string, forLeague?: string) => setDrawer({ playerId, leagueId: forLeague ?? null }),
+    setDrawerLeague: (forLeague: string) => setDrawer((d) => (d ? { ...d, leagueId: forLeague } : d)),
+    closePlayer: () => setDrawer(null),
+  }), [me, isLoading, error, leagues, erroredLeagues, leagueId, setLeagueId, leagueColor, drawer])
 
   return <Ctx.Provider value={value}>{children}</Ctx.Provider>
 }
