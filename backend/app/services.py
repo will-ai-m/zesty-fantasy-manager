@@ -889,22 +889,6 @@ class Service:
         }
         return {"bars": bars, "roster": roster, "spots": spots}
 
-    async def waivers(self, league_id: str, week: int | None) -> dict:
-        """Every free agent in one league, for the Browse tab: the whole pool on this league's
-        projections, with "vs mine" measured against my roster here. The ranked waiver list, the
-        trends and the rosters are cross-league and come from `waiver_board`."""
-        b = await self._league_bundle(league_id)
-        week = week or self._claim_week(await self.state())
-        ctx = await self._week_context(b, week)
-        rostered = self._rostered(b)
-        rows = [r for r in (self._enrich(ctx, pid) for pid in self._pool_ids(ctx)) if r and r["position"] in FANTASY_POSITIONS]
-        self._rank_by_position(rows, "proj_week", "proj_week_rank")
-        free = [r for r in rows if r["player_id"] not in rostered]
-        bars = self._my_side(b, ctx)["bars"]
-        for r in free:
-            r["vs_mine"] = self._vs_mine(bars, r)
-        return {"league": self._league_summary(b), "week": week, "ros_end_week": ctx["ros_end_week"], "players": free}
-
     MOVEMENT = {
         "sleeper": ("Sleeper adds and drops",
                     "What every Sleeper manager is doing right now, across all Sleeper leagues. The fastest signal here and the noisiest — it moves on news before the box score does, and just as hard on hype."),
@@ -913,28 +897,17 @@ class Service:
         "yahoo": ("Yahoo transaction trends", "Yahoo's own count of adds and drops across every Yahoo league, from its Transaction Trends page."),
     }
 
-    async def waiver_board(self, week: int | None) -> dict:
-        """The waiver wire across every league at once.
-
-        FantasyPros' waiver list is the spine: its players in its order, each carrying what he did
-        on the field last week — points, snap share, targets and carries — and where he stands in
-        each of my leagues, so one row says both whether he is worth a claim and where I can still
-        make it. The trends lists (one per platform, since each publishes a different measure) get
-        the same league columns. K and D/ST are left to the streaming page.
-
-        Last week's points are standard half-PPR, one scale for every league: all of these leagues
-        score half-PPR, and so does the FantasyPros list the rows come from.
-        """
+    async def _league_side(self, week: int) -> tuple[list, list, dict, list]:
+        """The per-league scaffolding both cross-league waiver views need: the bundles and week
+        contexts, what each roster holds, the bar "vs mine" measures against, and the claims
+        already in. Ordered Sleeper first, since a player is enriched from the first league that
+        knows him and nothing on those rows is league-scored."""
         me = await self.me()
-        st = me["state"]
-        week = week or self._claim_week(st)
-        season = str(st["season"])
         bundles = await self._all_bundles(me)
         ctxs, pendings = await asyncio.gather(
             asyncio.gather(*(self._week_context(b, week) for b in bundles)),
             asyncio.gather(*(self._pending_claims(b, week) for b in bundles)),
         )
-
         per: dict[str, dict] = {}
         leagues = []
         for b, ctx, pending in zip(bundles, ctxs, pendings):
@@ -948,18 +921,12 @@ class Service:
                 "waiver": summary["waiver"], "my_team": summary["my_team"],
                 "roster": side["roster"], "spots": side["spots"], "pending": pending,
             })
-
-        # Enriched from the first league that knows the player, Sleeper leagues first: nothing on
-        # these rows is league-scored except what goes into each league's column.
         ordered = sorted(zip(bundles, ctxs), key=lambda bc: bc[0]["league"].get("platform") != "sleeper")
+        return ordered, leagues, per, list(ctxs)
 
-        def row_for(pid: str) -> dict | None:
-            for _, ctx in ordered:
-                if pid in ctx["players"] and (r := self._enrich(ctx, pid)):
-                    return r
-            return None
-
-        def with_standing(r: dict) -> dict:
+    def _standing_for(self, per: dict[str, dict]):
+        """A row plus where it stands in every league, with what it would be worth there."""
+        def attach(r: dict) -> dict:
             standing = {}
             for lid, L in per.items():
                 sd = self._availability(L["b"], L["ctx"], L["rostered"], L["roles"], r["player_id"])
@@ -970,6 +937,74 @@ class Service:
                         sd["bid"] = L["claims"][r["player_id"]]
                 standing[lid] = sd
             return {**r, "leagues": standing}
+        return attach
+
+    # The browse table reads a fraction of what an enriched row carries, and the pool is a
+    # thousand rows wide — the rest is a megabyte of JSON nobody looks at. The drawer has the
+    # full picture when a row is clicked.
+    POOL_FIELDS = (
+        "player_id", "name", "position", "team", "injury_status", "injury_body_part", "on_bye",
+        "opponent", "playing_today", "game_status", "owned", "started", "adds_24h", "drops_24h",
+        "lw_pts_half", "lw_snap_pct", "lw_targets", "lw_carries",
+        "fp_ros_pos_rank", "fp_ros_ecr", "fp_waiver_rank", "fp_waiver_pos_rank", "leagues",
+    )
+
+    async def waiver_pool(self, week: int | None) -> dict:
+        """Every player who is claimable in at least one league, with where he stands in each.
+
+        The pool used to be one league's free agents, which made the search box lie: a player
+        rostered in the league you happened to be looking at simply was not there, with nothing
+        to say why. Now the question is the useful one — is he available anywhere — and the only
+        players left out are the ones nobody can have, because all four leagues roster them.
+        """
+        week = week or self._claim_week(await self.state())
+        ordered, leagues, per, ctxs = await self._league_side(week)
+        attach = self._standing_for(per)
+
+        # A candidate is anyone some league counts as fantasy-relevant; the cut comes after, on
+        # whether at least one league leaves him claimable.
+        candidates: dict[str, None] = {}
+        for _, ctx in ordered:
+            for pid in self._pool_ids(ctx):
+                if (ctx["players"].get(pid) or {}).get("position") in FANTASY_POSITIONS:
+                    candidates.setdefault(pid)
+
+        rows = []
+        for pid in candidates:
+            if all(L["rostered"].get(pid) is not None for L in per.values()):
+                continue
+            for _, ctx in ordered:
+                if pid in ctx["players"] and (r := self._enrich(ctx, pid)):
+                    if r["position"] in FANTASY_POSITIONS:
+                        full = attach(r)
+                        rows.append({k: full.get(k) for k in self.POOL_FIELDS})
+                    break
+        rows.sort(key=lambda r: -(r.get("owned") or 0))
+        return {"week": week, "leagues": leagues, "players": rows}
+
+    async def waiver_board(self, week: int | None) -> dict:
+        """The waiver wire across every league at once.
+
+        FantasyPros' waiver list is the spine: its players in its order, each carrying what he did
+        on the field last week — points, snap share, targets and carries — and where he stands in
+        each of my leagues, so one row says both whether he is worth a claim and where I can still
+        make it. The trends lists (one per platform, since each publishes a different measure) get
+        the same league columns. K and D/ST are left to the streaming page.
+
+        Last week's points are standard half-PPR, one scale for every league: all of these leagues
+        score half-PPR, and so does the FantasyPros list the rows come from.
+        """
+        st = await self.state()
+        week = week or self._claim_week(st)
+        season = str(st["season"])
+        ordered, leagues, per, _ctxs = await self._league_side(week)
+        with_standing = self._standing_for(per)
+
+        def row_for(pid: str) -> dict | None:
+            for _, ctx in ordered:
+                if pid in ctx["players"] and (r := self._enrich(ctx, pid)):
+                    return r
+            return None
 
         fp_data, fp_idx = self._fp()
         fp_rows = []

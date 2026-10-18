@@ -193,6 +193,10 @@ function standingSort(st: WaiverStanding | undefined): number | null {
 function targetColumns(lead: Column<Target>[], opts: {
   week: number; lastWeek: number; leagues: WaiverLeague[]; stars: Set<string>; onStar: (id: string) => void
   planned: Set<string>; onPlan: (leagueId: string, playerId: string) => void
+  /** Browsing the whole pool needs the league columns more than the touch counts, and the table
+   * only has a laptop's width to spend: the opponent and the touch counts come off, and the
+   * drawer still has both when a row is clicked. */
+  compact?: boolean
 }): Column<Target>[] {
   const lw = opts.lastWeek
   return [
@@ -212,7 +216,7 @@ function targetColumns(lead: Column<Target>[], opts: {
         )
       },
     },
-    { key: 'opp', header: 'Opp', title: `Opponent in week ${opts.week}, the week you are claiming into`, render: (t) => <span className={t.on_bye ? 'text-stone-400' : ''}>{t.on_bye ? 'BYE' : t.opponent ?? '—'}</span>, sort: (t) => t.opponent },
+    ...(opts.compact ? [] : [{ key: 'opp', header: 'Opp', title: `Opponent in week ${opts.week}, the week you are claiming into`, render: (t: Target) => <span className={t.on_bye ? 'text-stone-400' : ''}>{t.on_bye ? 'BYE' : t.opponent ?? '—'}</span>, sort: (t: Target) => t.opponent }]),
     rosColumn as Column<Target>,
     {
       key: 'lw_pts_half', header: `Wk ${lw}`, className: 'border-l border-stone-200',
@@ -226,8 +230,10 @@ function targetColumns(lead: Column<Target>[], opts: {
         : <span className={t.lw_snap_pct >= 0.7 ? 'font-semibold text-emerald-700' : t.lw_snap_pct >= 0.45 ? 'text-stone-700' : 'text-stone-400'}>{Math.round(t.lw_snap_pct * 100)}%</span>,
       sort: (t) => t.lw_snap_pct, align: 'right', desc: true,
     },
-    { key: 'lw_targets', header: 'Tgt', title: `Times targeted in week ${lw}`, render: (t) => t.lw_targets ? <span className="font-medium text-sky-800">{t.lw_targets}</span> : dot, sort: (t) => t.lw_targets, align: 'right', desc: true },
-    { key: 'lw_carries', header: 'Car', title: `Rushing attempts in week ${lw}`, render: (t) => t.lw_carries ? <span className="font-medium text-amber-800">{t.lw_carries}</span> : dot, sort: (t) => t.lw_carries, align: 'right', desc: true },
+    ...(opts.compact ? [] : [
+      { key: 'lw_targets', header: 'Tgt', title: `Times targeted in week ${lw}`, render: (t: Target) => t.lw_targets ? <span className="font-medium text-sky-800">{t.lw_targets}</span> : dot, sort: (t: Target) => t.lw_targets, align: 'right' as const, desc: true },
+      { key: 'lw_carries', header: 'Car', title: `Rushing attempts in week ${lw}`, render: (t: Target) => t.lw_carries ? <span className="font-medium text-amber-800">{t.lw_carries}</span> : dot, sort: (t: Target) => t.lw_carries, align: 'right' as const, desc: true },
+    ]),
     ...opts.leagues.map((lg, i): Column<Target> => ({
       key: `lg_${lg.league_id}`,
       className: i === 0 ? 'border-l border-stone-200' : '',
@@ -266,6 +272,17 @@ function movementColumns(kind: Platform): Column<Target>[] {
     { key: 'drops_24h', header: 'Drops', title: 'Dropped across all Sleeper leagues in the last 24 hours', render: (t) => t.drops_24h ? <span className="text-red-700">{fmtInt(t.drops_24h)}</span> : dot, sort: (t) => t.drops_24h, align: 'right', desc: true },
   ]
 }
+
+/** Browsing the wire is a market question — who is widely rostered, who is being added — so
+ * those lead, where the ranked list leads with FantasyPros' number. */
+const BROWSE_LEAD: Column<Target>[] = [{
+  key: 'owned', header: 'Own%',
+  title: "Percent of leagues rostering him, and the adds across Sleeper in the last 24 hours. The trends list has the rest of the movement.",
+  render: (t) => (
+    <span>{pct(t.owned)}{t.adds_24h ? <span className="ml-1 text-[10px] text-emerald-700">+{fmtInt(t.adds_24h)}</span> : null}</span>
+  ),
+  sort: (t) => t.owned, align: 'right', desc: true,
+}]
 
 const FP_LEAD: Column<Target>[] = [{
   key: 'fp_waiver', header: 'FP', title: "Rank on FantasyPros' waiver-wire list, and within position",
@@ -598,21 +615,19 @@ type Tab = 'list' | 'browse'
  * league you are looking at. Browse all is the whole free-agent pool of the league picked in the
  * sidebar, for anyone the lists do not reach. */
 export default function Waivers() {
-  const { leagueId, setLeagueId, leagues, week } = useApp()
+  const { leagueId, setLeagueId, week } = useApp()
   const board = useQuery({ queryKey: ['waiver-board'], queryFn: () => api.waiverBoard(), staleTime: 60_000 })
   const [tab, setTab] = useState<Tab>('list')
-  // Browse is the one view here about a single league, so it follows the league the roster card
-  // is on — that card's tabs are the switcher, rather than a separate control somewhere else.
   const [rosterLeague, setRosterLeague] = useState<string | null>(leagueId)
-  const browseLeague = rosterLeague ?? leagueId
+  const pickLeague = (id: string) => { setRosterLeague(id); setLeagueId(id) }
+  // The whole claimable pool, fetched when you open the tab. It shares the league contexts the
+  // board already built, so it is quick on top of a page that is already open.
   const browse = useQuery({
-    queryKey: ['waivers', browseLeague],
-    queryFn: () => api.waivers(browseLeague!),
-    enabled: !!browseLeague && tab === 'browse',
+    queryKey: ['waiver-pool'],
+    queryFn: () => api.waiverPool(),
+    enabled: tab === 'browse',
     staleTime: 60_000,
   })
-  const pickLeague = (id: string) => { setRosterLeague(id); setLeagueId(id) }
-  const browsing = leagues.find((l) => l.league_id === browseLeague) ?? null
   const qc = useQueryClient()
   const { data: plans } = useQuery({ queryKey: ['waiver-plans'], queryFn: api.waiverPlans })
   const savePlan = useMutation({
@@ -673,20 +688,22 @@ export default function Waivers() {
     return (browse.data?.players ?? []).filter((p) => {
       if (!shown(p, browsePos, hideOut)) return false
       if (fpOnly && p.fp_waiver_rank == null) return false
-      if (relevantOnly && !(p.owned >= 1 || p.adds_24h > 0 || (p.proj_week ?? 0) >= 2 || (p.proj_ros ?? 0) >= 20 || p.fp_ros_ecr != null)) return false
+      // A search is a direct question, so it searches the whole pool; the relevance cut only
+      // applies to browsing it.
+      if (!q && relevantOnly && !(p.owned >= 1 || p.adds_24h > 0 || p.fp_ros_ecr != null)) return false
       if (q && !(p.name.toLowerCase().includes(q) || (p.team ?? '').toLowerCase() === q)) return false
       return true
     })
   }, [browse.data, browsePos, hideOut, fpOnly, relevantOnly, search])
-  const browseColumns = useMemo(() => playerColumns({
-    week: browse.data?.week ?? targetWeek, showRank: true, vsMine: true, espn: browsing?.platform === 'espn', fp: true, fpWaiver: true, usage: lastWeek,
-    league: browseLeague ?? undefined,
-  }), [browse.data?.week, targetWeek, lastWeek, browsing?.platform, browseLeague])
+  const browseColumns = useMemo(() => targetColumns(BROWSE_LEAD, {
+    week: browse.data?.week ?? targetWeek, lastWeek, leagues: browse.data?.leagues ?? d?.leagues ?? [],
+    stars, onStar, planned: plannedKeys, onPlan: onPlanClaim, compact: true,
+  }), [browse.data, targetWeek, lastWeek, d?.leagues, stars, plannedKeys])
 
   const meta = d?.fantasypros_meta
   const side = d && (
     <SideColumn>
-      <RosterCard leagues={d.leagues} selected={browseLeague} onSelect={pickLeague} week={targetWeek} />
+      <RosterCard leagues={d.leagues} selected={rosterLeague ?? leagueId} onSelect={pickLeague} week={targetWeek} />
       <PendingStrip leagues={d.leagues} />
       <PlannerStrip leagues={d.leagues} plans={weekPlans} week={targetWeek} lookup={lookup}
                     onSet={(v) => savePlan.mutate({ ...v, week: targetWeek })}
@@ -706,7 +723,7 @@ export default function Waivers() {
 
       <div className="flex flex-wrap items-center gap-3">
         <div className="flex rounded-md border border-stone-200 bg-white p-0.5">
-          {([['list', 'Waiver list'], ['browse', `Browse all${browsing ? ` · ${browsing.name}` : ''}`]] as [Tab, string][]).map(([k, label]) => (
+          {([['list', 'Waiver list'], ['browse', 'Browse all']] as [Tab, string][]).map(([k, label]) => (
             <button key={k} onClick={() => setTab(k)} className={`rounded px-3 py-1 text-[12px] ${tab === k ? 'bg-stone-900 text-white' : 'text-stone-700 hover:bg-stone-100'}`}>{label}</button>
           ))}
         </div>
@@ -720,9 +737,9 @@ export default function Waivers() {
         {tab === 'browse' && (
           <>
             <input value={search} onChange={(e) => setSearch(e.target.value)} placeholder="Search name or team…" className="w-56 rounded-md border border-stone-200 bg-white px-2.5 py-1 text-[12px]" />
-            <label className="flex items-center gap-1.5 text-[12px] text-stone-700" title="Hide players nobody rosters, adds, projects or ranks"><input type="checkbox" checked={relevantOnly} onChange={(e) => setRelevantOnly(e.target.checked)} /> Relevant only</label>
+            <label className="flex items-center gap-1.5 text-[12px] text-stone-700" title="Hide players nobody rosters, adds or ranks. A search ignores this and looks through the whole pool."><input type="checkbox" checked={relevantOnly} onChange={(e) => setRelevantOnly(e.target.checked)} /> Relevant only</label>
             <label className="flex items-center gap-1.5 text-[12px] text-stone-700" title="Only players on the FantasyPros waiver-wire list"><input type="checkbox" checked={fpOnly} onChange={(e) => setFpOnly(e.target.checked)} /> <span className="rounded bg-violet-100 px-1 py-0.5 text-[9.5px] font-bold leading-none text-violet-800">FP</span> picks</label>
-            <span className="ml-auto text-[12px] text-stone-500">{browseRows.length} of {browse.data?.players.length ?? 0} free agents</span>
+            <span className="ml-auto text-[12px] text-stone-500">{browseRows.length} of {browse.data?.players.length ?? 0} claimable somewhere</span>
           </>
         )}
       </div>
@@ -777,7 +794,11 @@ export default function Waivers() {
           <div className="min-w-0 flex-1">
             {browse.isLoading && <Spinner label="Loading the whole pool…" />}
             {browse.error && <ErrorBox error={browse.error} />}
-            {browse.data && <DataTable rows={browseRows} columns={browseColumns} rowKey={(p) => p.player_id} initialSort={{ key: 'owned', dir: 'desc' }} rowClass={gameDayRowClass} />}
+            {browse.data && (
+              <DataTable rows={browseRows} columns={browseColumns} rowKey={(p) => p.player_id}
+                         initialSort={{ key: 'owned', dir: 'desc' }} rowClass={rowClass} maxHeight="calc(100vh - 210px)"
+                         empty="Nobody matches. Players rostered in all four leagues are left out — nobody can claim them." />
+            )}
           </div>
           {side}
         </div>

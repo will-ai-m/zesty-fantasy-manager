@@ -12,7 +12,8 @@ leagues and lets you pick your streamers; you make the actual moves on the platf
   he sits above the player of yours he would replace (**vs mine**). The same columns run under each
   platform's trends list (Sleeper adds/drops, ESPN ownership change, Yahoo transaction trends). Beside it,
   your roster in any league — with open spots, empty starting slots and IR — and your pending claims.
-  **Browse all** is the full free-agent pool of the league picked in the sidebar.
+  **Browse all** is every player claimable in at least one league — searchable, with the same per-league
+  columns, and nobody rostered everywhere, since nobody can have them.
 - **Streaming D/ST + K** — every K and D/ST with the next four weeks of Vegas lines, and where each one is yours,
   open or taken in every league at once. Click one to make it your pick for a league and week; the picks
   board says what each still takes (add, claim, start) and ticks itself off once it is in your lineup.

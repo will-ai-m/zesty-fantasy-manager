@@ -79,15 +79,16 @@ async def me():
     return await svc().me()
 
 
-@app.get("/api/leagues/{league_id}/waivers")
-async def waivers(league_id: str, week: int | None = Query(default=None, ge=1, le=18)):
-    return await svc().waivers(league_id, week)
-
-
 @app.get("/api/waivers")
 async def waiver_board(week: int | None = Query(default=None, ge=1, le=18)):
     """The waiver wire across every league: FantasyPros' list, the trends, and my rosters."""
     return await svc().waiver_board(week)
+
+
+@app.get("/api/waiver-pool")
+async def waiver_pool(week: int | None = Query(default=None, ge=1, le=18)):
+    """Every player claimable in at least one league, with where he stands in each."""
+    return await svc().waiver_pool(week)
 
 
 @app.get("/api/plan")

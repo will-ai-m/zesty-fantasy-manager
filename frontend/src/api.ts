@@ -385,12 +385,12 @@ export interface PlanLeague {
 
 export interface PlanResponse { week: number; leagues: PlanLeague[] }
 
-/** Every free agent in one league, for the Browse tab. */
-export interface WaiversResponse {
-  league: LeagueSummary
+/** Every player claimable in at least one league, for the Browse tab. Rows carry only what that
+ * table reads — the drawer fetches the rest when a row is clicked. */
+export interface WaiverPool {
   week: number
-  ros_end_week: number
-  players: Player[]
+  leagues: WaiverLeague[]
+  players: Target[]
 }
 
 export interface Owner { user_id: string | null; display_name: string; team_name: string; avatar: string | null }
@@ -564,7 +564,7 @@ export interface GamesResponse {
 
 export const api = {
   me: () => http<Me>('/api/me'),
-  waivers: (leagueId: string, week?: number) => http<WaiversResponse>(`/api/leagues/${leagueId}/waivers${q({ week })}`),
+  waiverPool: (week?: number) => http<WaiverPool>(`/api/waiver-pool${q({ week })}`),
   waiverBoard: (week?: number) => http<WaiverBoard>(`/api/waivers${q({ week })}`),
   plan: (week?: number) => http<PlanResponse>(`/api/plan${q({ week })}`),
   waiverPlans: () => http<WaiverPlan[]>('/api/waiver-plans'),
