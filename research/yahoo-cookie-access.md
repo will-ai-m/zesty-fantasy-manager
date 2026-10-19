@@ -276,8 +276,12 @@ Verified live against the user's league (Dad League, 1260115):
   team's roster page (`#team-roster`, slot via `span.pos-label[data-pos]`, player via `data-ys-playerid`),
   the players/free-agent pool (paginated by `count` used as an **offset**, not page size), records (home
   page), and transactions (`table.Tst-transaction-table`, "Free Agent"=add / "To Waivers"=drop).
-- **Client-rendered (NOT in server HTML, unavailable on this path):** the standings page, and each team's
-  **live FAAB balance and waiver priority**. These degrade to 0/None. This is the one real capability gap
-  vs. pub-api-ro/OAuth.
+- **Client-rendered (NOT in server HTML):** the standings page, and each team's waiver priority.
+- **Correction, 2026-10-19:** the FAAB balance is *not* only client-rendered. Each team's own page carries
+  `Waiver Budget: $89` as plain text, and the same page carries the record (`5-1-0`, `3 rd Place`,
+  `402.00 Total Points`) that the home-page parser misses — the home page lists matchups beside team links,
+  not records. The client-rendered standings page sent the first pass looking in the wrong place. Both are
+  parseable from pages `yahoo.py` already fetches for rosters; neither is parsed yet. Waiver priority
+  remains the one real gap vs. pub-api-ro/OAuth.
 - Projections come from Sleeper, scored with the translated Yahoo scoring — identical output to a scratch
   pub-api-ro build, confirming the scoring translation is correct.

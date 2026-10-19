@@ -8,10 +8,17 @@ Those pages are server-rendered HTML, so this module parses them with BeautifulS
 anchors (`data-ys-playerid`, `span.pos-label[data-pos]`, the settings tables). Read-only, no writes.
 
 Yahoo exposes no projections, so the service layer scores Sleeper's projection stats with each league's
-translated Yahoo scoring, exactly as it does for Sleeper-native leagues. Two fields the logged-in site
-renders client-side (via JS) are NOT in the server HTML and are therefore unavailable on this path: each
-team's live FAAB balance and waiver priority. They degrade to unknown; everything else (rosters, the
-free-agent/waiver pool with ownership, scoring, records, transactions) comes from the server HTML.
+translated Yahoo scoring, exactly as it does for Sleeper-native leagues. Rosters, the free-agent/waiver
+pool with ownership, scoring and transactions all come from the server HTML.
+
+Three gaps as of 2026-10-19, none of them fundamental:
+  * **Records read 0-0.** `parse_home` looks for them beside the team links on the league home page, which
+    lists matchups instead. The standings page is client-rendered, but each team's own page carries the
+    record in its header (`5-1-0`), and this module already fetches every team page for rosters.
+  * **FAAB reads as a full budget.** Same story: `waiver_budget_used` is hard-coded 0 here, while the team
+    page says `Waiver Budget: $89` in plain text. Waiver priority really does look client-rendered.
+  * **No free-agent/waiver split.** `normalize_pool` leaves `status` None for every row, so the app treats
+    every unrostered Yahoo player as a free agent; where the FA/W marker moved in Yahoo's HTML is unknown.
 See research/yahoo-cookie-access.md."""
 from __future__ import annotations
 

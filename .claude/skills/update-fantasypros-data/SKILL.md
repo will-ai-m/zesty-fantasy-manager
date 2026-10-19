@@ -40,13 +40,16 @@ Why each set exists:
 
 - **weekly** — this week's start/sit view, one page per position. The K and D/ST pages cover
   only the current week, which is why the two ROS pages below exist.
-- **ros** — one cross-position page. The rest-of-season value read, used on the roster views.
+- **ros** — one cross-position page. The rest-of-season value read, and the most load-bearing set
+  in the app: `pos_rank` is the **ROS** column everywhere, and `rank_ecr` is what **vs mine**
+  measures a free agent against. It runs on a handful of experts all season, so read small gaps
+  as noise.
 - **ros_k** / **ros_dst** — the standing view of a kicker or defence, read beside the Vegas line
   on the Streaming tab for the weeks past the one the weekly pages cover. Kept as their own
   sets, *not* as extra pages on `ros`: these rank within a position and `ros` ranks across all
   of them, so merging would leave one set whose `rank_ecr` means different things per row.
-- **waiver** — the pickup shortlist only, ~50 rows, and the ordering behind the FantasyPros
-  panel on the Waivers tab.
+- **waiver** — the pickup shortlist only, ~50 rows. It is the spine of the Waivers tab: its
+  players in its order are the rows of the main table, so a missing or stale run empties it.
 
 To add a page: append a `Page(set_name, key, slug)` to `PAGES`. A new set name also needs
 adding to `SET_NAMES` or `indexes()` will not build an index for it.
@@ -93,6 +96,15 @@ A healthy run prints 100% matched for all five sets:
 ```
 weekly: 579 players, 579 matched to Sleeper (100%)
 ```
+
+One or two unmatched is normal and not worth chasing: it is usually a player the two sites file at
+different positions (Riley Nowakowski, a fullback Pittsburgh lists at tight end, is ranked ~TE100
+and never surfaces in the app).
+
+Expert counts climb through the week — the weekly pages run about a dozen experts on a Tuesday and
+45+ by Sunday — so a Tuesday run is fine for the waiver list and worth repeating later in the week
+for start/sit. The pages roll to the next week on Tuesday; before that a run re-fetches the week
+just played.
 
 If matched drops well below that, the nflverse crosswalk join is failing — check that
 `data/cache/nflverse_ids_v2.json` is present and current (it is refetched daily by
