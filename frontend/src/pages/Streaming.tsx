@@ -88,14 +88,43 @@ function basis(s: Streamer, pos: Pos, i: number): number | null {
   if (!g?.matchup) return null
   return pos === 'DEF' ? g.opp_implied ?? g.opp_implied_est : g.implied ?? g.implied_est
 }
-/** What orders the page: one week's Vegas number (the default), or FantasyPros' rank — for the
- * one week its K and D/ST pages cover, or for the rest of the season. */
-type Order = 'week' | 'fp' | 'ros'
+/** The kicker table's offence columns, each an order of its own. `dir` turns a value into the
+ * page's lower-is-better score: a red-zone touchdown rate and fourth-down tries are good for a
+ * kicker when low — every touchdown and every fourth down gone for is a kick that never happened —
+ * and the rest are good when high. */
+const FACTORS = {
+  rz_td: { field: 'rz_td_pct', label: 'RZ TD', dir: 1, digits: 0, pct: true, says: 'red-zone touchdown rate, lowest first', unit: 'points of red-zone touchdown rate' },
+  rz_fg: { field: 'rz_fg_pct', label: 'RZ FG', dir: -1, digits: 0, pct: true, says: 'red-zone field-goal rate, highest first', unit: 'points of red-zone field-goal rate' },
+  third: { field: 'third_pct', label: '3rd', dir: -1, digits: 0, pct: true, says: 'third-down conversion rate, highest first', unit: 'points of third-down conversion rate' },
+  fourth: { field: 'fourth_att_pg', label: '4th/g', dir: 1, digits: 1, pct: false, says: 'fourth-down attempts a game, fewest first', unit: 'fourth-down attempts a game' },
+  fga: { field: 'fg_att_pg', label: 'FGA/g', dir: -1, digits: 1, pct: false, says: 'field-goal attempts a game, most first', unit: 'field-goal attempts a game' },
+} as const satisfies Record<string, { field: keyof TeamFactors; label: string; dir: 1 | -1; digits: number; pct: boolean; says: string; unit: string }>
+type Factor = keyof typeof FACTORS
+const FACTOR_TIPS: Record<Factor, string> = {
+  rz_td: 'Share of red-zone trips ending in a touchdown. LOW is good for a kicker — a team that stalls inside the 20 kicks three points instead of scoring six and leaving him the extra point.',
+  rz_fg: "Share of red-zone trips ending in a field-goal attempt. The same split read from the kicker's side, so high is good.",
+  third: 'Third-down conversion rate. Drives that stay alive are drives that reach field-goal range — though they also reach the end zone, so read it alongside the red-zone split rather than on its own.',
+  fourth: 'Fourth-down attempts per game. The only factor here that actively removes kicks — every fourth down the staff goes for is a field goal that never happened. Low is good.',
+  fga: "Field-goal attempts per game, and the split short (under 40 yards) · long (40+). The most direct measure there is — every factor beside it ends up here — and the split is what your league's distance scoring actually pays on.",
+}
+const isFactor = (o: Order): o is Factor => o in FACTORS
+const factorValue = (s: Streamer, f: Factor): number | null => (s.factors?.[FACTORS[f].field] as number | null | undefined) ?? null
+const showFactor = (v: number | null, f: Factor) => v == null ? '—' : `${fmt(v, FACTORS[f].digits)}${FACTORS[f].pct ? '%' : ''}`
+
+/** What orders the page: one week's Vegas number (the default), FantasyPros' rank — for the one
+ * week its K and D/ST pages cover, or for the rest of the season — or, on the kicker table, any of
+ * the offence columns. A defence has no offence columns, so it reads those orders as the line. */
+type Order = 'week' | 'fp' | 'ros' | Factor
+const effective = (order: Order, pos: Pos): Order => (isFactor(order) && pos === 'DEF' ? 'week' : order)
 
 /** A unit's standing under the chosen order as a number where lower is better, so every
- * comparison on the page is one `<`. Null when it has none: a bye, an unpriced game, or a unit
- * FantasyPros did not rank. */
+ * comparison on the page is one `<`. Null when it has none: a bye, an unpriced game, a unit
+ * FantasyPros did not rank, or an offence without the stat. */
 function score(s: Streamer, pos: Pos, order: Order, at: number): number | null {
+  if (isFactor(order) && pos === 'K') {
+    const v = factorValue(s, order)
+    return v == null ? null : FACTORS[order].dir * v
+  }
   if (order === 'fp') return s.fp_rank
   if (order === 'ros') return s.fp_ros_rank
   const v = basis(s, pos, at)
@@ -233,7 +262,7 @@ function Yours({ pos, rows, leagues, weeks, at, order, pickOf, onPick }: {
             <th className={`${th} text-left`}>Yours</th>
             {weeks.map((w, i) => <th key={w} className={`${th} text-center ${i === 0 ? 'border-l border-stone-100' : ''} ${i === at ? 'text-stone-700' : ''}`}>Wk {w}</th>)}
             <th className={`${th} border-l border-stone-100 text-left`} title="The best unit still open in this league by whatever the tables are ordered on, and how far it beats (▲) or trails (▼) the best of yours by the same measure">
-              Best open · {order === 'fp' ? `FantasyPros wk ${weeks[0]}` : order === 'ros' ? 'FantasyPros ROS' : `Wk ${weeks[at]}`}
+              Best open · {isFactor(order) ? FACTORS[order].label : order === 'fp' ? `FantasyPros wk ${weeks[0]}` : order === 'ros' ? 'FantasyPros ROS' : `Wk ${weeks[at]}`}
             </th>
           </tr>
         </thead>
@@ -256,11 +285,13 @@ function Yours({ pos, rows, leagues, weeks, at, order, pickOf, onPick }: {
             // FantasyPros' weekly rank is for the first week only, so that is the matchup to show.
             const wi = order === 'fp' ? 0 : at
             const bv = best ? basis(best, pos, wi) : null
-            const unit = order === 'week' ? 'implied points' : `place${delta === 1 ? '' : 's'} in the FantasyPros ${order === 'ros' ? 'rest-of-season' : 'weekly'} rank`
+            const unit = isFactor(order) ? FACTORS[order].unit
+              : order === 'week' ? 'implied points' : `place${delta === 1 ? '' : 's'} in the FantasyPros ${order === 'ros' ? 'rest-of-season' : 'weekly'} rank`
+            const digits = isFactor(order) ? FACTORS[order].digits : order === 'week' ? 1 : 0
             const bestSt = best?.leagues[lg.league_id]
             const bestCell = (
               <td className="border-l border-stone-100 py-1.5 pl-2 pr-3 align-top" rowSpan={Math.max(1, mine.length)}>
-                {!best ? <span className="text-[11px] text-stone-400">{order === 'week' ? 'Nothing open with a game' : 'Nothing open that FantasyPros ranks'}</span> : (
+                {!best ? <span className="text-[11px] text-stone-400">{order === 'week' ? 'Nothing open with a game' : isFactor(order) ? 'Nothing open with offence stats' : 'Nothing open that FantasyPros ranks'}</span> : (
                   <span className={`flex items-center gap-2 ${up ? '' : 'opacity-60'}`}>
                     {pickOf(lg.league_id, pos, weeks[at]) === best.player_id
                       ? <button onClick={() => onPick(lg.league_id, best)} title={`Your week ${weeks[at]} pick here — click to clear it`}
@@ -270,10 +301,11 @@ function Yours({ pos, rows, leagues, weeks, at, order, pickOf, onPick }: {
                     <PlayerCell p={best} />
                     <span className="text-[11px] text-stone-500">{best.weeks[wi]?.matchup ?? 'bye'}</span>
                     {bv != null && <span className={`rounded px-1 py-0.5 text-[11px] tabular-nums ${pos === 'DEF' && band(bv) ? `${BAND[band(bv)!].cell} ${BAND[band(bv)!].num}` : 'text-stone-700'}`}>{fmt(bv, 1)}</span>}
-                    {order !== 'week' && <span className="text-[11px] font-semibold tabular-nums text-violet-700">{order === 'fp' ? 'FP' : 'ROS'} #{order === 'fp' ? best.fp_rank : best.fp_ros_rank}</span>}
+                    {(order === 'fp' || order === 'ros') && <span className="text-[11px] font-semibold tabular-nums text-violet-700">{order === 'fp' ? 'FP' : 'ROS'} #{order === 'fp' ? best.fp_rank : best.fp_ros_rank}</span>}
+                    {isFactor(order) && <span className="text-[11px] font-semibold tabular-nums text-stone-700">{FACTORS[order].label} {showFactor(factorValue(best, order), order)}</span>}
                     {delta != null && (up
-                      ? <span className="text-[11px] font-semibold text-emerald-700" title={`Better than your best by ${fmt(delta, order === 'week' ? 1 : 0)} ${unit}`}>▲{fmt(delta, order === 'week' ? 1 : 0)}</span>
-                      : <span className="text-[11px] text-stone-500" title={`Behind your best by ${fmt(delta, order === 'week' ? 1 : 0)} ${unit}`}>▼{fmt(delta, order === 'week' ? 1 : 0)}</span>)}
+                      ? <span className="text-[11px] font-semibold text-emerald-700" title={`Better than your best by ${fmt(delta, digits)} ${unit}`}>▲{fmt(delta, digits)}</span>
+                      : <span className="text-[11px] text-stone-500" title={`Behind your best by ${fmt(delta, digits)} ${unit}`}>▼{fmt(delta, digits)}</span>)}
                     {bestSt?.status === 'waivers' && <span className="rounded bg-amber-100 px-1 py-0.5 text-[9.5px] font-semibold leading-none text-amber-800">W</span>}
                   </span>
                 )}
@@ -367,13 +399,14 @@ function Matrix({ pos, rows, leagues, weeks, at, setAt, order, setOrder, pickOf,
                 ROS{order === 'ros' ? ' ▾' : ''}
               </button>
             </th>
-            {k && <>
-              <th className={`${th} border-l border-stone-100 text-center`} title="Share of red-zone trips ending in a touchdown. LOW is good for a kicker — a team that stalls inside the 20 kicks three points instead of scoring six and leaving him the extra point.">RZ TD</th>
-              <th className={`${th} text-center`} title="Share of red-zone trips ending in a field-goal attempt. The same split read from the kicker's side, so high is good.">RZ FG</th>
-              <th className={`${th} text-center`} title="Third-down conversion rate. Drives that stay alive are drives that reach field-goal range — though they also reach the end zone, so read it alongside the red-zone split rather than on its own.">3rd</th>
-              <th className={`${th} text-center`} title="Fourth-down attempts per game. The only factor here that actively removes kicks — every fourth down the staff goes for is a field goal that never happened. Low is good.">4th/g</th>
-              <th className={`${th} text-center`} title="Field-goal attempts per game, and the split short (under 40 yards) · long (40+). The most direct measure there is — every factor beside it ends up here — and the split is what your league's distance scoring actually pays on.">FGA/g</th>
-            </>}
+            {k && (Object.keys(FACTORS) as Factor[]).map((f, i) => (
+              <th key={f} className={`${th} text-center ${i === 0 ? 'border-l border-stone-100' : ''}`}>
+                <button onClick={() => setOrder(f)} disabled={!rows.some((s) => factorValue(s, f) != null)} className={sortBtn(order === f)}
+                        title={`${FACTOR_TIPS[f]} Click to order by it — ${FACTORS[f].says}.`}>
+                  {FACTORS[f].label}{order === f ? ' ▾' : ''}
+                </button>
+              </th>
+            ))}
           </tr>
         </thead>
         <tbody>
@@ -570,8 +603,8 @@ export default function Streaming() {
   const weeks = data?.weeks ?? []
   const week = Math.min(at, Math.max(0, weeks.length - 1))
   const sorted = useMemo(() => ({
-    DEF: data ? sortBy(data.DEF, 'DEF', order, week) : [],
-    K: data ? sortBy(data.K, 'K', order, week) : [],
+    DEF: data ? sortBy(data.DEF, 'DEF', effective(order, 'DEF'), week) : [],
+    K: data ? sortBy(data.K, 'K', effective(order, 'K'), week) : [],
   }), [data, order, week])
 
   const pickOf: PickOf = (leagueId, pos, w) =>
@@ -585,8 +618,11 @@ export default function Streaming() {
   const onClear = (leagueId: string, pos: Pos, w: number) => save.mutate({ league_id: leagueId, position: pos, week: w, player_id: null })
   // Leagues where something open beats everything you have at the position, for the tab badges.
   const upgrades = (pos: Pos) => (data?.leagues ?? [])
-    .filter((lg) => lg.slots[pos] && bestOpen(sorted[pos], lg.league_id, pos, order, week)?.up).length
-  const orderedBy = order === 'fp' ? `FantasyPros' week ${weeks[0]} rank` : order === 'ros' ? "FantasyPros' rest-of-season rank" : `week ${weeks[week]}'s line`
+    .filter((lg) => lg.slots[pos] && bestOpen(sorted[pos], lg.league_id, pos, effective(order, pos), week)?.up).length
+  // The order this tab actually reads: an offence-column order means nothing to the defence table.
+  const tabOrder = effective(order, tab)
+  const orderedBy = isFactor(tabOrder) ? `the offence's ${FACTORS[tabOrder].says}`
+    : tabOrder === 'fp' ? `FantasyPros' week ${weeks[0]} rank` : tabOrder === 'ros' ? "FantasyPros' rest-of-season rank" : `week ${weeks[week]}'s line`
   const games = data?.K.find((s) => s.factors?.games != null)?.factors?.games ?? null
 
   return (
@@ -640,20 +676,20 @@ export default function Streaming() {
         <>
           <section className="space-y-1.5">
             <h2 className="text-[12px] font-semibold uppercase tracking-wide text-stone-500">Yours, by league</h2>
-            <Yours pos={tab} rows={sorted[tab]} leagues={data.leagues} weeks={weeks} at={week} order={order} pickOf={pickOf} onPick={onPick(tab)} />
+            <Yours pos={tab} rows={sorted[tab]} leagues={data.leagues} weeks={weeks} at={week} order={tabOrder} pickOf={pickOf} onPick={onPick(tab)} />
           </section>
 
           <section className="space-y-1.5">
             <h2 className="text-[12px] font-semibold uppercase tracking-wide text-stone-500">{tab === 'K' ? 'Every kicker' : 'Every defense'}</h2>
             <p className="text-[12px] text-stone-500">
               {tab === 'DEF'
-                ? <>{order === 'week'
+                ? <>{tabOrder === 'week'
                     ? <>Ordered by the opponent's implied total in week {weeks[week]}, lowest first — a defence scores off the other team failing. Click a week to order by it instead, or the FantasyPros Wk / ROS headers to order by the experts.</>
-                    : <>Ordered by {orderedBy}, best first — click a week to go back to ordering by the line.</>}
+                    : <>Ordered by {orderedBy}{isFactor(tabOrder) ? '' : ', best first'} — click a week to go back to ordering by the line.</>}
                   A <span className="rounded bg-stone-800 px-1 text-[10px] font-bold uppercase text-white">dark tag</span> flags extreme weather in the forecast (20+ mph wind, 35+ mph gusts, snow or heavy rain) — ordinary weather is already in the line. A number in <span className="border-b border-dotted border-current italic text-stone-600">dotted italics</span> is not a line at all: books price a week or two ahead, so beyond that each cell falls back to the opponent's points per game this season. Click a defence's name for how defences have fared against the offence it meets this week.</>
-                : <>{order === 'week'
-                    ? <>Ordered by the kicker's own team implied total in week {weeks[week]}, highest first — click a week to order by it instead, or the FantasyPros Wk / ROS headers to order by the experts.</>
-                    : <>Ordered by {orderedBy}, best first — click a week to go back to ordering by the line.</>}
+                : <>{tabOrder === 'week'
+                    ? <>Ordered by the kicker's own team implied total in week {weeks[week]}, highest first — click a week to order by it instead, the FantasyPros Wk / ROS headers to order by the experts, or any offence column to order by it.</>
+                    : <>Ordered by {orderedBy}{isFactor(tabOrder) ? '' : ', best first'} — click a week to go back to ordering by the line.</>}
                   {' '}A kicker's points follow his offence's <em>volume</em> rather than who it is playing, so the right-hand columns describe the offence: how often it stalls in the red zone, how well it sustains drives, how often the staff takes the kick away on fourth down, and what that adds up to in attempts.
                   {games != null && <> Season to date — <span className="font-medium text-stone-600">{games} game{games === 1 ? '' : 's'}</span>, so read the rates as a first signal.</>}
                   {' '}Limited to the kickers FantasyPros ranks this week, plus yours.
@@ -665,7 +701,7 @@ export default function Streaming() {
               (<span className="font-semibold text-emerald-700">FA</span>, or <span className="font-semibold text-amber-700">W</span> on waivers), or whose he is;
               your pick for the week is outlined in <span className="rounded bg-amber-100 px-1 font-semibold text-amber-900 ring-1 ring-amber-400">amber</span>. Rows open nowhere are faded.
             </p>
-            <Matrix pos={tab} rows={sorted[tab]} leagues={data.leagues} weeks={weeks} at={week} setAt={setAt} order={order} setOrder={setOrder} pickOf={pickOf} onPick={onPick(tab)} />
+            <Matrix pos={tab} rows={sorted[tab]} leagues={data.leagues} weeks={weeks} at={week} setAt={setAt} order={tabOrder} setOrder={setOrder} pickOf={pickOf} onPick={onPick(tab)} />
           </section>
         </>
       )}

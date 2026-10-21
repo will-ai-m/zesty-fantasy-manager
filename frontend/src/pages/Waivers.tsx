@@ -637,6 +637,9 @@ export default function Waivers() {
   })
   const [pos, setPos] = useState('ALL')
   const [hideOut, setHideOut] = useState(false)
+  // Narrows every table on the page to the players you have starred — the short list you are
+  // actually deciding between, read against the wire rather than hunted for in it.
+  const [starredOnly, setStarredOnly] = useState(false)
   const [trendKind, setTrendKind] = useState<Platform | null>(null)
   // Starred players, kept in this browser — the ones you are after this week.
   const [stars, setStars] = useState<Set<string>>(() => new Set(load<string[]>('waiverStars', [])))
@@ -656,9 +659,11 @@ export default function Waivers() {
   const d = board.data
   const targetWeek = d?.week ?? week
   const lastWeek = Math.max(1, targetWeek - 1)
-  const fpRows = useMemo(() => (d?.fantasypros ?? []).filter((t) => shown(t, pos, hideOut)), [d, pos, hideOut])
+  const fpRows = useMemo(() => (d?.fantasypros ?? []).filter((t) => shown(t, pos, hideOut) && (!starredOnly || stars.has(t.player_id))),
+    [d, pos, hideOut, starredOnly, stars])
   const trend = d?.trends.find((t) => t.kind === trendKind) ?? d?.trends[0] ?? null
-  const trendRows = useMemo(() => (trend?.rows ?? []).filter((t) => shown(t, pos, hideOut)), [trend, pos, hideOut])
+  const trendRows = useMemo(() => (trend?.rows ?? []).filter((t) => shown(t, pos, hideOut) && (!starredOnly || stars.has(t.player_id))),
+    [trend, pos, hideOut, starredOnly, stars])
 
   // Planned claims are keyed by league and player: one plan per man per league per week.
   const weekPlans = useMemo(() => (plans ?? []).filter((p) => p.week === targetWeek), [plans, targetWeek])
@@ -687,14 +692,15 @@ export default function Waivers() {
     const q = search.trim().toLowerCase()
     return (browse.data?.players ?? []).filter((p) => {
       if (!shown(p, browsePos, hideOut)) return false
+      if (starredOnly && !stars.has(p.player_id)) return false
       if (fpOnly && p.fp_waiver_rank == null) return false
       // A search is a direct question, so it searches the whole pool; the relevance cut only
-      // applies to browsing it.
-      if (!q && relevantOnly && !(p.owned >= 1 || p.adds_24h > 0 || p.fp_ros_ecr != null)) return false
+      // applies to browsing it — and a starred player is relevant by definition.
+      if (!q && !starredOnly && relevantOnly && !(p.owned >= 1 || p.adds_24h > 0 || p.fp_ros_ecr != null)) return false
       if (q && !(p.name.toLowerCase().includes(q) || (p.team ?? '').toLowerCase() === q)) return false
       return true
     })
-  }, [browse.data, browsePos, hideOut, fpOnly, relevantOnly, search])
+  }, [browse.data, browsePos, hideOut, fpOnly, relevantOnly, search, starredOnly, stars])
   const browseColumns = useMemo(() => targetColumns(BROWSE_LEAD, {
     week: browse.data?.week ?? targetWeek, lastWeek, leagues: browse.data?.leagues ?? d?.leagues ?? [],
     stars, onStar, planned: plannedKeys, onPlan: onPlanClaim, compact: true,
@@ -734,6 +740,11 @@ export default function Waivers() {
           })}
         </div>
         <label className="flex items-center gap-1.5 text-[12px] text-stone-700"><input type="checkbox" checked={hideOut} onChange={(e) => setHideOut(e.target.checked)} /> Hide Out / IR</label>
+        <label className={`flex items-center gap-1.5 text-[12px] ${stars.size ? 'text-stone-700' : 'text-stone-400'}`}
+               title={stars.size ? 'Show only the players you have starred, in every table on the page' : 'Star a player with the ☆ beside his name first'}>
+          <input type="checkbox" checked={starredOnly} disabled={!stars.size && !starredOnly} onChange={(e) => setStarredOnly(e.target.checked)} />
+          <span className={starredOnly ? 'text-amber-500' : ''}>★</span> Starred only{stars.size > 0 && <span className="text-stone-400">({stars.size})</span>}
+        </label>
         {tab === 'browse' && (
           <>
             <input value={search} onChange={(e) => setSearch(e.target.value)} placeholder="Search name or team…" className="w-56 rounded-md border border-stone-200 bg-white px-2.5 py-1 text-[12px]" />
@@ -760,7 +771,7 @@ export default function Waivers() {
                 rest-of-season ranking; otherwise yours, or whose. K and D/ST are on the streaming page.
               </p>
               <DataTable rows={fpRows} columns={fpCols} rowKey={(t) => t.player_id} initialSort={{ key: 'fp_waiver', dir: 'asc' }} rowClass={rowClass} maxHeight="36rem"
-                         empty="Nobody on this week's FantasyPros list matches the filters." />
+                         empty={starredOnly ? "None of your starred players are on this week's FantasyPros list — try Browse all." : "Nobody on this week's FantasyPros list matches the filters."} />
             </section>
 
             {trend && (
@@ -781,7 +792,7 @@ export default function Waivers() {
                   ? <ErrorBox error={new Error(`${trend.label}: ${trend.error}`)} />
                   : <DataTable key={trend.kind} rows={trendRows} columns={trendCols} rowKey={(t) => t.player_id}
                                initialSort={{ key: trend.kind === 'espn' ? 'owned_change' : trend.kind === 'yahoo' ? 'adds' : 'adds_24h', dir: 'desc' }}
-                               rowClass={rowClass} maxHeight="30rem" empty="Nothing is moving at this position." />}
+                               rowClass={rowClass} maxHeight="30rem" empty={starredOnly ? 'None of your starred players are on this trends list.' : 'Nothing is moving at this position.'} />}
               </section>
             )}
           </div>
@@ -797,7 +808,9 @@ export default function Waivers() {
             {browse.data && (
               <DataTable rows={browseRows} columns={browseColumns} rowKey={(p) => p.player_id}
                          initialSort={{ key: 'owned', dir: 'desc' }} rowClass={rowClass} maxHeight="calc(100vh - 210px)"
-                         empty="Nobody matches. Players rostered in all four leagues are left out — nobody can claim them." />
+                         empty={starredOnly
+                           ? 'None of your starred players match — a starred player rostered in all four leagues is left out, since nobody can claim him.'
+                           : 'Nobody matches. Players rostered in all four leagues are left out — nobody can claim them.'} />
             )}
           </div>
           {side}
