@@ -24,7 +24,9 @@ const record = (t: NonNullable<LeagueSummary['my_team']>) =>
  * of them at once. */
 function LeagueStatus({ league, collapsed }: { league: LeagueSummary; collapsed: boolean }) {
   const t = league.my_team
-  const waiver = league.waiver.daily ? 'daily waivers' : league.waiver.day_of_week ? `waivers ${league.waiver.day_of_week}` : null
+  // A league that failed to load comes back as a bare stub — name, platform and the error, with no
+  // settings — so nothing about its waivers can be read until it is healthy again.
+  const waiver = league.error ? null : league.waiver.daily ? 'daily waivers' : league.waiver.day_of_week ? `waivers ${league.waiver.day_of_week}` : null
   const tip = league.error ?? [t?.team_name, `${league.scoring_format} · ${league.total_rosters} teams · ${league.waiver.type}`, waiver].filter(Boolean).join(' — ')
   const tone = league.error ? 'border-red-200 bg-red-50 text-red-700' : 'border-transparent text-stone-700'
 
