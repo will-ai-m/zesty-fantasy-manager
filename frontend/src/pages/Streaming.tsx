@@ -1,7 +1,7 @@
 import { useMemo, useState } from 'react'
 import { useMutation, useQuery, useQueryClient } from '@tanstack/react-query'
-import { api, type GameWeather, type Standing, type Streamer, type StreamingLeague, type StreamingResponse, type TeamFactors } from '../api'
-import { fmt, shortDate } from '../lib/format'
+import { api, type GameWeather, type HandedOut, type Standing, type Streamer, type StreamingLeague, type StreamingResponse, type TeamFactors } from '../api'
+import { fmt, ordinal, shortDate } from '../lib/format'
 import { ErrorBox, LeagueBar, PlatformBadge, PlayerCell, Spinner } from '../components/Badges'
 
 type Pos = 'K' | 'DEF'
@@ -164,24 +164,51 @@ function mineIn(rows: Streamer[], leagueId: string): Streamer[] {
     .sort((a, b) => Number(starting(role(b))) - Number(starting(role(a))))
 }
 
-/** One week of a unit's schedule: who they play and the number that matters. */
-function GameCell({ g, pos, lead }: { g: Streamer['weeks'][number] | undefined; pos: Pos; lead: boolean }) {
+/** Where a defence ranks among the 32 for what it has handed kickers: the eight that have handed
+ * the most are the good matchups, the eight that have handed the least the bad. The same quartile
+ * cut the player panel uses, so the two read alike. */
+function rankBand(h: HandedOut): 'good' | 'ok' | 'bad' {
+  const q = Math.round(h.teams / 4)
+  return h.rank <= q ? 'good' : h.rank > h.teams - q ? 'bad' : 'ok'
+}
+
+/** One week of a unit's schedule: who they play and the number that matters.
+ *
+ * A defence's cell is graded on the opponent's implied total. A kicker's is graded on what actually
+ * happened: how kickers have done against the defence across from him, which is the question the
+ * player panel answers for one kicker and this answers for the whole table at once. The implied
+ * total stays on the cell as a number, since it says what the offence is expected to do. */
+function GameCell({ g, pos, lead, handed }: {
+  g: Streamer['weeks'][number] | undefined; pos: Pos; lead: boolean
+  /** What each defence has handed kickers; only read for a kicker. */
+  handed?: Record<string, HandedOut>
+}) {
   const ring = lead ? 'ring-1 ring-inset ring-stone-400' : ''
   if (!g || !g.matchup) return <td className={`whitespace-nowrap px-2 py-1.5 text-center text-[11px] text-stone-300 ${ring}`}>bye</td>
   const v = pos === 'DEF' ? g.opp_implied ?? g.opp_implied_est : g.implied ?? g.implied_est
-  // A defence is graded on the band, which colours the cell. A kicker's cell is left plain and
-  // only marks the offences priced to score — the kicker table is read down its own columns.
-  const b = pos === 'DEF' ? band(v) : null
+  const h = pos === 'K' && g.opp ? handed?.[g.opp] : undefined
+  const b = pos === 'DEF' ? band(v) : h ? rankBand(h) : null
   const tone = b ? BAND[b] : null
   const kw = pos === 'K' ? kickerWeather(g.weather) : null
   const ex = pos === 'DEF' ? extremeWeather(g.weather) : null
   return (
     <td className={`whitespace-nowrap px-2 py-1.5 text-center ${tone?.cell ?? ''} ${ring}`}>
       <div className={`text-[11px] ${tone?.opp ?? 'text-stone-600'}`}>{g.matchup}</div>
-      <div className={`mt-0.5 text-[11px] tabular-nums ${tone?.num ?? (pos === 'K' && v != null && v >= 25 ? 'font-semibold text-emerald-700' : 'text-stone-400')}`}
+      <div className={`mt-0.5 text-[11px] tabular-nums ${pos === 'K'
+        // On a filled cell the colour belongs to the defence's record, so a high implied total is
+        // marked by weight alone — a green number inside a red cell says two things at once.
+        ? (tone ? (v != null && v >= 25 ? 'font-semibold text-stone-800' : 'text-stone-600')
+                : v != null && v >= 25 ? 'font-semibold text-emerald-700' : 'text-stone-400')
+        : tone?.num ?? 'text-stone-400'}`}
            title={g.estimated ? `Nobody has priced week ${g.week} yet — this is ${pos === 'DEF' ? "the opponent's" : "the team's"} points per game this season, on the same scale as an implied total` : undefined}>
         {v == null ? '—' : <span className={g.estimated ? 'border-b border-dotted border-current italic' : ''}>{fmt(v, 1)}</span>}
       </div>
+      {h && tone && (
+        <div className={`mt-0.5 text-[11px] tabular-nums ${tone.num}`}
+             title={`${g.opp} have handed kickers ${fmt(h.avg_pts, 1)} points a game this season — ${h.rank === 1 ? 'the most of any defence' : h.rank === h.teams ? 'the fewest of any defence' : `${ordinal(h.rank)} most of ${h.teams}`}, against a league average of ${fmt(h.league_avg, 1)}. Half-PPR, over ${h.games} game${h.games === 1 ? '' : 's'}.`}>
+          #{h.rank}<span className="font-normal opacity-70"> · {fmt(h.avg_pts, 1)}</span>
+        </div>
+      )}
       {kw && <div title={kw.tip} className={`mt-0.5 text-[9.5px] leading-tight ${kw.tone}`}>{kw.text}</div>}
       {ex && <div title={ex.tip} className="mt-1 leading-none"><span className="rounded bg-stone-800 px-1 py-0.5 text-[9px] font-bold uppercase text-white">{ex.text}</span></div>}
     </td>
@@ -249,8 +276,9 @@ function StandingCell({ s, st, lg, pos, week, picked, onPick }: {
 }
 
 /** What you have at this position in every league, with the best thing still open there. */
-function Yours({ pos, rows, leagues, weeks, at, order, pickOf, onPick }: {
-  pos: Pos; rows: Streamer[]; leagues: StreamingLeague[]; weeks: number[]; at: number; order: Order; pickOf: PickOf; onPick: OnPick
+function Yours({ pos, rows, leagues, weeks, at, order, handed, pickOf, onPick }: {
+  pos: Pos; rows: Streamer[]; leagues: StreamingLeague[]; weeks: number[]; at: number; order: Order
+  handed?: Record<string, HandedOut>; pickOf: PickOf; onPick: OnPick
 }) {
   const label = pos === 'K' ? 'kicker' : 'D/ST'
   return (
@@ -332,7 +360,7 @@ function Yours({ pos, rows, leagues, weeks, at, order, pickOf, onPick }: {
                       <PlayerCell p={s} />
                     </span>
                   </td>
-                  {s.weeks.map((g, i) => <GameCell key={g.week} g={g} pos={pos} lead={i === at} />)}
+                  {s.weeks.map((g, i) => <GameCell key={g.week} g={g} pos={pos} lead={i === at} handed={handed} />)}
                   {n === 0 && bestCell}
                 </tr>
               )
@@ -345,8 +373,9 @@ function Yours({ pos, rows, leagues, weeks, at, order, pickOf, onPick }: {
 }
 
 /** Every unit at the position: its next four weeks, then where it stands in each league. */
-function Matrix({ pos, rows, leagues, weeks, at, setAt, order, setOrder, pickOf, onPick }: {
+function Matrix({ pos, rows, leagues, weeks, at, setAt, order, setOrder, handed, pickOf, onPick }: {
   pos: Pos; rows: Streamer[]; leagues: StreamingLeague[]; weeks: number[]; at: number; setAt: (i: number) => void
+  handed?: Record<string, HandedOut>
   order: Order; setOrder: (o: Order) => void; pickOf: PickOf; onPick: OnPick
 }) {
   const hasFp = rows.some((s) => s.fp_rank != null)
@@ -419,7 +448,7 @@ function Matrix({ pos, rows, leagues, weeks, at, setAt, order, setOrder, pickOf,
                 <td className={`whitespace-nowrap py-1.5 pr-3 ${s.mine ? 'border-l-2 border-sky-500 pl-2.5' : 'pl-3'}`}>
                   <PlayerCell p={s} />
                 </td>
-                {s.weeks.map((g, n) => <GameCell key={g.week} g={g} pos={pos} lead={n === at} />)}
+                {s.weeks.map((g, n) => <GameCell key={g.week} g={g} pos={pos} lead={n === at} handed={handed} />)}
                 {leagues.map((lg) => (
                   <StandingCell key={lg.league_id} s={s} st={s.leagues[lg.league_id]} lg={lg} pos={pos} week={weeks[at]}
                                 picked={pickOf(lg.league_id, pos, weeks[at]) === s.player_id} onPick={onPick} />
@@ -676,7 +705,7 @@ export default function Streaming() {
         <>
           <section className="space-y-1.5">
             <h2 className="text-[12px] font-semibold uppercase tracking-wide text-stone-500">Yours, by league</h2>
-            <Yours pos={tab} rows={sorted[tab]} leagues={data.leagues} weeks={weeks} at={week} order={tabOrder} pickOf={pickOf} onPick={onPick(tab)} />
+            <Yours pos={tab} rows={sorted[tab]} leagues={data.leagues} weeks={weeks} at={week} order={tabOrder} handed={data.allowed?.K} pickOf={pickOf} onPick={onPick(tab)} />
           </section>
 
           <section className="space-y-1.5">
@@ -693,6 +722,10 @@ export default function Streaming() {
                   {' '}A kicker's points follow his offence's <em>volume</em> rather than who it is playing, so the right-hand columns describe the offence: how often it stalls in the red zone, how well it sustains drives, how often the staff takes the kick away on fourth down, and what that adds up to in attempts.
                   {games != null && <> Season to date — <span className="font-medium text-stone-600">{games} game{games === 1 ? '' : 's'}</span>, so read the rates as a first signal.</>}
                   {' '}Limited to the kickers FantasyPros ranks this week, plus yours.
+                  {' '}Each week's cell is coloured by how kickers have done against the defence across from him this season —
+                  {' '}<span className="rounded bg-emerald-100/70 px-1 text-emerald-900">green</span> if it is one of the eight that have handed kickers the most,
+                  {' '}<span className="rounded bg-red-100/60 px-1 text-red-900">red</span> if one of the eight that have handed the least — and the figure is that rank,
+                  {' '}then the points a game (half-PPR). The implied total above it is what his offence is expected to do; the colour is what has actually happened.
                   {' '}Click a kicker's name for how kickers have fared against the defence he meets this week.
                   {' '}A number in <span className="border-b border-dotted border-current italic">dotted italics</span> is the offence's points per game this season, standing in for a week no book has priced yet.
                   {' '}Under each game: <span className="text-stone-600">⌂ dome</span> or <span className="text-stone-600">⌂ roof</span> (retractable) indoors, otherwise the forecast wind in mph, gusts, rain or snow and freezing temperatures —
@@ -701,7 +734,7 @@ export default function Streaming() {
               (<span className="font-semibold text-emerald-700">FA</span>, or <span className="font-semibold text-amber-700">W</span> on waivers), or whose he is;
               your pick for the week is outlined in <span className="rounded bg-amber-100 px-1 font-semibold text-amber-900 ring-1 ring-amber-400">amber</span>. Rows open nowhere are faded.
             </p>
-            <Matrix pos={tab} rows={sorted[tab]} leagues={data.leagues} weeks={weeks} at={week} setAt={setAt} order={tabOrder} setOrder={setOrder} pickOf={pickOf} onPick={onPick(tab)} />
+            <Matrix pos={tab} rows={sorted[tab]} leagues={data.leagues} weeks={weeks} at={week} setAt={setAt} order={tabOrder} setOrder={setOrder} handed={data.allowed?.K} pickOf={pickOf} onPick={onPick(tab)} />
           </section>
         </>
       )}

@@ -1,6 +1,6 @@
 import { useQuery } from '@tanstack/react-query'
 import { api, type Matchup as MatchupData, type FpDetail, type FpSet, type MatchupGame, type WeekRow } from '../api'
-import { fmt } from '../lib/format'
+import { fmt, ordinal } from '../lib/format'
 import { useApp } from './AppContext'
 import { ErrorBox, Injury, Pos, Spinner } from './Badges'
 
@@ -81,12 +81,6 @@ const STAT_COLS: Record<string, { key: string; label: string; digits?: number }[
 }
 STAT_COLS.TE = STAT_COLS.WR
 
-const ordinal = (n: number) => {
-  const end = ['th', 'st', 'nd', 'rd']
-  const v = n % 100
-  return `${n}${end[(v - 20) % 10] ?? end[v] ?? end[0]}`
-}
-
 // What each position's game against the opponent is worth showing: a defence by what the offence
 // did to it, a kicker by the kicks he got.
 const MATCHUP_COLS: Record<string, { key: keyof MatchupGame; label: string; title?: string; digits?: number }[]> = {
@@ -131,7 +125,9 @@ function Matchup({ m, team }: { m: MatchupData; team: string | null }) {
         <p className="text-[13px] text-stone-700">
           {m.opponent} have handed {unit} <span className="font-semibold">{fmt(m.avg_pts)} points a game</span> —{' '}
           <span className={generous ? 'font-semibold text-emerald-700' : stingy ? 'text-red-700' : 'text-stone-600'}>
-            {m.rank === 1 ? `the most of any ${m.position === 'K' ? 'defence' : 'offence'}` : `${ordinal(m.rank!)} most of ${m.teams}`}
+            {m.rank === 1 ? `the most of any ${m.position === 'K' ? 'defence' : 'offence'}`
+              : m.rank === m.teams ? `the fewest of any ${m.position === 'K' ? 'defence' : 'offence'}`
+              : `${ordinal(m.rank!)} most of ${m.teams}`}
           </span>
           <span className="text-stone-500"> · league average {fmt(m.league_avg)}</span>
         </p>

@@ -1,3 +1,10 @@
+/** 1 -> "1st", 22 -> "22nd", 11 -> "11th". */
+export const ordinal = (n: number): string => {
+  const end = ['th', 'st', 'nd', 'rd']
+  const v = n % 100
+  return `${n}${end[(v - 20) % 10] ?? end[v] ?? end[0]}`
+}
+
 export const fmt = (n: number | null | undefined, digits = 1): string =>
   n === null || n === undefined || Number.isNaN(n) ? '—' : n.toFixed(digits)
 

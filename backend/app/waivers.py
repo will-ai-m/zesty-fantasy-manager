@@ -135,6 +135,7 @@ def stream_table(rows: list[dict], position: str, odds_by_week: dict[int, dict[s
                 "week": w,
                 # No entry at all means no game that week — a bye, not an unpriced one.
                 "matchup": g.get("label") if g else None,
+                "opp": g.get("opp") if g else None,
                 "implied": implied[0], "implied_est": implied[1],
                 "opp_implied": opp[0], "opp_implied_est": opp[1],
                 "estimated": shown[0] is None and shown[1] is not None,

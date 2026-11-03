@@ -1225,9 +1225,15 @@ class Service:
                                     fp_week, ros_ranks, k_starters if pos == "K" else None, team_factors, my_ids)
             tables[pos] = [{**r, "leagues": standing[r["player_id"]]} for r in table]
 
+        # What each defence has handed kickers, per game and ranked of 32, for colouring a kicker's
+        # matchup cells. Standard half-PPR, since a matrix across leagues has no one league's
+        # scoring to use; the drawer reads the same routine in whichever league you are viewing.
+        kicker_allowed = self._handed_out(await self._faced(season, week, "K"), lambda st: _f(st.get("pts_half_ppr")))
+
         return {
             "week": week,
             "weeks": weeks,
+            "allowed": {"K": kicker_allowed},
             "leagues": [{
                 "league_id": b["league"]["league_id"],
                 "name": b["league"]["name"],
@@ -1414,33 +1420,18 @@ class Service:
         rows = sorted(merged.values(), key=lambda r: (-len(r["leagues"]), -(r.get("proj_ros") or 0)))
         return {"week": week, "leagues": [{"league_id": b["league"]["league_id"], "name": b["league"]["name"], "platform": b["league"].get("platform", "sleeper")} for b in bundles], "players": rows}
 
-    async def _matchup_history(self, season: str, week: int, team: str, scoring: dict, position: str) -> dict:
-        """How other units at this position have done against the team this one meets in `week`.
+    async def _faced(self, season: str, week: int, position: str) -> list[dict]:
+        """Every game a defence or kicker has played before `week`, with who he faced.
 
-        The question a streamer actually asks is not how his own defence or kicker has played — it
-        is what the team in front of it has let the rest of the league do. So this is the week's
-        opponent read from the other sideline: every defence that has faced that offence, or every
-        kicker that has faced that defence, and how each one did. `rank` is over the 32 opponents,
-        1 being the one that has handed the position the most, which is the one worth streaming
-        against.
-
-        Points are in the league's scoring where there is a league, half-PPR otherwise, the same
-        rule the game logs beside this use.
+        One row per unit per game: the week, his player_id, his team, the team he played, and the
+        stat line. The drawer's matchup history and the streaming matrix both read this, so the
+        number a kicker's cell shows is the same one the drawer says, by construction.
         """
         players = await self.s.players()
         _, opp, _sched = await self._schedule_maps(season)
-        foe = _matchup_team(opp.get(week, {}).get(team))
-        if not foe:
-            return {"position": position, "week": week, "opponent": None, "on_bye": True, "games": [], "teams": 0}
-
         weeks = list(range(1, week))
         indexes = await asyncio.gather(*(self._stats_index(season, w, final=True) for w in weeks))
-
-        def points(st: dict) -> float | None:
-            return score(st, scoring) if scoring else _f(st.get("pts_half_ppr"))
-
-        games: list[dict] = []
-        totals: dict[str, list[float]] = {}
+        out: list[dict] = []
         for w, idx in zip(weeks, indexes):
             for pid, rec in idx.items():
                 st = rec.get("stats") or {}
@@ -1457,35 +1448,75 @@ class Service:
                         continue
                     own, name = p.get("team"), p.get("full_name") or pid
                 faced = _matchup_team(opp.get(w, {}).get(own)) if own else None
-                if not faced:
-                    continue
-                pts = points(st)
-                totals.setdefault(faced, []).append(pts or 0.0)
-                if faced != foe:
-                    continue
-                row = {
-                    "week": w, "player_id": pid, "name": name, "team": own,
-                    # Home and away are from the opponent's side: where this game was played for them.
-                    "at_home": (opp.get(w, {}).get(foe) or "").startswith("vs"),
-                    "pts": round(pts, 2) if pts is not None else None,
-                }
-                if position == "DEF":
-                    row.update({"pts_allow": _f(st.get("pts_allow")), "yds_allow": _f(st.get("yds_allow")),
-                                "sack": _f(st.get("sack")), "int": _f(st.get("int")),
-                                "fum_rec": _f(st.get("fum_rec")), "def_td": _f(st.get("def_td"))})
-                else:
-                    row.update({"fga": _f(st.get("fga")), "fgm": _f(st.get("fgm")), "fgm_50p": _f(st.get("fgm_50p")),
-                                "fgm_lng": _f(st.get("fgm_lng")), "xpa": _f(st.get("xpa")), "xpm": _f(st.get("xpm"))})
-                games.append(row)
+                if faced:
+                    out.append({"week": w, "player_id": pid, "name": name, "team": own, "faced": faced, "stats": st})
+        return out
+
+    @staticmethod
+    def _handed_out(games: list[dict], points) -> dict[str, dict]:
+        """What each team has handed the position, per game, and where that ranks among the 32.
+
+        `rank` is 1 for the team that has handed it the most — the one worth streaming against.
+        `points` turns a stat line into fantasy points; a game it cannot score counts as nothing.
+        """
+        totals: dict[str, list[float]] = {}
+        for g in games:
+            totals.setdefault(g["faced"], []).append(points(g["stats"]) or 0.0)
+        avg = {team: sum(v) / len(v) for team, v in totals.items() if v}
+        order = sorted(avg, key=lambda t: -avg[t])
+        league_avg = round(sum(avg.values()) / len(avg), 1) if avg else None
+        return {team: {"avg_pts": round(a, 1), "rank": order.index(team) + 1, "teams": len(order),
+                       "games": len(totals[team]), "league_avg": league_avg}
+                for team, a in avg.items()}
+
+    async def _matchup_history(self, season: str, week: int, team: str, scoring: dict, position: str) -> dict:
+        """How other units at this position have done against the team this one meets in `week`.
+
+        The question a streamer actually asks is not how his own defence or kicker has played — it
+        is what the team in front of it has let the rest of the league do. So this is the week's
+        opponent read from the other sideline: every defence that has faced that offence, or every
+        kicker that has faced that defence, and how each one did. `rank` is over the 32 opponents,
+        1 being the one that has handed the position the most, which is the one worth streaming
+        against.
+
+        Points are in the league's scoring where there is a league, half-PPR otherwise, the same
+        rule the game logs beside this use.
+        """
+        _, opp, _sched = await self._schedule_maps(season)
+        foe = _matchup_team(opp.get(week, {}).get(team))
+        if not foe:
+            return {"position": position, "week": week, "opponent": None, "on_bye": True, "games": [], "teams": 0}
+
+        def points(st: dict) -> float | None:
+            return score(st, scoring) if scoring else _f(st.get("pts_half_ppr"))
+
+        faced = await self._faced(season, week, position)
+        everyone = self._handed_out(faced, points)
+        handed = everyone.get(foe) or {}
+        games: list[dict] = []
+        for g in faced:
+            if g["faced"] != foe:
+                continue
+            st, pts = g["stats"], points(g["stats"])
+            row = {
+                "week": g["week"], "player_id": g["player_id"], "name": g["name"], "team": g["team"],
+                # Home and away are from the opponent's side: where this game was played for them.
+                "at_home": (opp.get(g["week"], {}).get(foe) or "").startswith("vs"),
+                "pts": round(pts, 2) if pts is not None else None,
+            }
+            if position == "DEF":
+                row.update({"pts_allow": _f(st.get("pts_allow")), "yds_allow": _f(st.get("yds_allow")),
+                            "sack": _f(st.get("sack")), "int": _f(st.get("int")),
+                            "fum_rec": _f(st.get("fum_rec")), "def_td": _f(st.get("def_td"))})
+            else:
+                row.update({"fga": _f(st.get("fga")), "fgm": _f(st.get("fgm")), "fgm_50p": _f(st.get("fgm_50p")),
+                            "fgm_lng": _f(st.get("fgm_lng")), "xpa": _f(st.get("xpa")), "xpm": _f(st.get("xpm"))})
+            games.append(row)
         games.sort(key=lambda g: g["week"])
-        avg = {o: sum(v) / len(v) for o, v in totals.items() if v}
-        order = sorted(avg, key=lambda o: -avg[o])
         return {
             "position": position, "week": week, "opponent": foe, "on_bye": False, "games": games,
-            "avg_pts": round(avg[foe], 1) if foe in avg else None,
-            "rank": order.index(foe) + 1 if foe in avg else None,
-            "teams": len(order),
-            "league_avg": round(sum(avg.values()) / len(avg), 1) if avg else None,
+            "avg_pts": handed.get("avg_pts"), "rank": handed.get("rank"),
+            "teams": len(everyone), "league_avg": next(iter(everyone.values()), {}).get("league_avg"),
         }
 
     async def player_detail(self, player_id: str, league_id: str | None) -> dict:

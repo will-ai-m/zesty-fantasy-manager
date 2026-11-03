@@ -206,6 +206,8 @@ export interface Trend { kind: Platform; label: string; blurb: string; rows: Tar
 export interface StreamGame {
   week: number
   matchup: string | null
+  /** The team across from this one — what the kicker matrix looks up to colour the cell. */
+  opp: string | null
   implied: number | null
   opp_implied: number | null
   /** Season points per game, standing in for a week nobody has priced yet — the same scale an
@@ -295,9 +297,15 @@ export interface StreamPick {
 }
 type PickKey = Pick<StreamPick, 'league_id' | 'position' | 'week'>
 
+/** What one defence has handed kickers this season, per game, ranked of 32. Rank 1 is the defence
+ * that has handed the most — the one worth streaming a kicker against. Half-PPR. */
+export interface HandedOut { avg_pts: number; rank: number; teams: number; games: number; league_avg: number | null }
+
 export interface StreamingResponse {
   week: number
   weeks: number[]
+  /** Keyed by the defence's team. Only kickers have one so far. */
+  allowed: { K: Record<string, HandedOut> }
   leagues: StreamingLeague[]
   DEF: Streamer[]
   K: Streamer[]
