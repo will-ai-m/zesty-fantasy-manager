@@ -1063,7 +1063,12 @@ class Service:
                 if not r:
                     return None
                 standing = self._availability(b, ctx, rostered, roles, pid)
-                if standing["status"] in ("free", "waivers"):
+                # A free agent can be on waivers by the time the plan is carried out (Yahoo
+                # waives every player whose game has kicked off, and its free/waivers split is not
+                # always read right), so every move is planned as a claim that carries a bid.
+                if standing["status"] == "free":
+                    standing = {"status": "waivers", "until": None}
+                if standing["status"] == "waivers":
                     standing["vs_mine"] = self._vs_mine(side["bars"], r)
                 return {**r, "standing": standing}
 
@@ -1077,7 +1082,7 @@ class Service:
                     continue
                 held = [r for r in side["roster"] if r["position"] == pick["position"]]
                 held.sort(key=lambda r: r["slot"] != pick["position"])
-                adds.append({**e, "slot": pick["position"], "replaces": held[0] if held else None})
+                adds.append({**e, "slot": pick["position"], "replaces": held[0] if held else None, "bid": pick.get("bid")})
 
             claims = []
             for plan in plans:

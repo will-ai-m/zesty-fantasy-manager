@@ -16,9 +16,11 @@ backend/.venv/bin/python .claude/skills/execute-waiver-wednesday/scripts/plan.py
 
 This needs the backend on :8000. If it isn't running, use `preview_start` with `backend`. The script prints one block per league: the URL to open, then the moves:
 - `CLAIM`: player, bid, drop.
-- `STREAM`: add the K or D/ST, drop the unit it replaces, then put him in the lineup.
+- `STREAM`: claim the K or D/ST with its bid, make the drop if one is listed, then put him in the lineup.
 
-Each line ends with the player's status: `free`, `waivers` or `gone`. Skip any `gone` line and say so.
+If a FAAB claim shows `bid: none set`, ask for the bid before confirming.
+
+Each line ends with the player's status: `waivers` or `taken`. The plan treats every unrostered player as on waivers, because a free agent can be waived by the time you get there. Skip any `taken` line and say so.
 
 ## 2. Confirm once
 
@@ -29,7 +31,7 @@ Show the checklist and ask: **"Submit all of these?"** Wait for a yes. That yes 
 Load the Chrome tools in a single ToolSearch call, as the claude-in-chrome instructions say. Open one new tab and work through the leagues there.
 
 - Search for the player on the league's players page and use its add or claim button.
-- **Free agent:** add him immediately. **On waivers:** put in a claim with the bid.
+- Put in a claim with the planned bid. If the site lets you add him outright with no bid, that's fine: add him and the bid goes unused.
 - Pick the drop from the plan. If the plan has `drop: none set` and the roster is full, stop and ask.
 - **STREAM:** once he's on the roster, set him in the K or DEF slot. You can't do this until the add clears. If he's on waivers, the claim is all you can do now, so say he still needs starting once it processes.
 - If a page shows a fee, a warning, or a different player or price than the plan, stop and ask.

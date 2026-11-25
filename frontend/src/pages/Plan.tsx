@@ -1,4 +1,4 @@
-import { useQuery } from '@tanstack/react-query'
+import { useMutation, useQuery, useQueryClient } from '@tanstack/react-query'
 import { api, type PlanAdd, type PlanClaim, type PlanLeague, type RosterPlayer } from '../api'
 import { ErrorBox, LeagueBar, PlatformBadge, PlayerCell, Pos, Spinner } from '../components/Badges'
 
@@ -43,14 +43,41 @@ function Move({ row, note, league }: { row: PlanAdd | PlanClaim; note?: React.Re
   )
 }
 
+/** The FAAB you mean to spend, edited in place; saved on blur or Enter, blank clears it. */
+function BidInput({ bid, min, onSave }: { bid: number | null; min: number; onSave: (bid: number | null) => void }) {
+  return (
+    <label className="flex shrink-0 items-center gap-0.5 text-[10.5px] text-stone-500" title="What you mean to bid">
+      $
+      <input type="number" min={min} defaultValue={bid ?? ''} placeholder="—" key={bid ?? ''}
+             onBlur={(e) => {
+               const v = e.target.value === '' ? null : Math.max(min, Math.round(Number(e.target.value)))
+               if (v !== bid) onSave(v)
+             }}
+             onKeyDown={(e) => { if (e.key === 'Enter') (e.target as HTMLInputElement).blur() }}
+             className={`w-12 rounded border px-1 py-0.5 text-[11.5px] tabular-nums text-stone-800 ${bid == null ? 'border-amber-400 bg-amber-50' : 'border-stone-300'}`} />
+    </label>
+  )
+}
+
 function LeagueCard({ lg, week }: { lg: PlanLeague; week: number }) {
+  const qc = useQueryClient()
+  const refresh = () => qc.invalidateQueries({ queryKey: ['plan'] })
+  const saveClaimBid = useMutation({
+    mutationFn: (v: { player_id: string; bid: number | null }) => api.setWaiverPlan({ league_id: lg.league_id, week, ...v }),
+    onSuccess: () => { refresh(); qc.invalidateQueries({ queryKey: ['waiver-plans'] }) },
+  })
+  const saveAddBid = useMutation({
+    mutationFn: (v: { player_id: string; slot: 'K' | 'DEF'; bid: number | null }) =>
+      api.setStreamPick({ league_id: lg.league_id, position: v.slot, week, player_id: v.player_id, bid: v.bid }),
+    onSuccess: () => { refresh(); qc.invalidateQueries({ queryKey: ['stream-picks'] }) },
+  })
   const active = lg.roster.filter((r) => r.slot !== 'IR' && r.slot !== 'TAXI')
   const groups = ROSTER_ORDER
     .map((pos) => [pos, active.filter((r) => r.position === pos).sort((a, b) => (a.fp_ros_ecr ?? 9999) - (b.fp_ros_ecr ?? 9999))] as const)
     .filter(([, rows]) => rows.length)
   const stashed = lg.roster.filter((r) => r.slot === 'IR' || r.slot === 'TAXI')
   const faab = lg.waiver.type_code === 2 ? lg.my_team?.faab_remaining ?? 0 : null
-  const spent = lg.claims.reduce((n, c) => n + (c.bid ?? 0), 0)
+  const spent = [...lg.claims, ...lg.adds.filter((a) => a.standing.status === 'waivers')].reduce((n, c) => n + (c.bid ?? 0), 0)
   const todo = [...lg.adds, ...lg.claims].filter((m) => m.standing.status === 'free' || m.standing.status === 'waivers').length
 
   const Row = ({ r }: { r: RosterPlayer }) => (
@@ -91,9 +118,14 @@ function LeagueCard({ lg, week }: { lg: PlanLeague; week: number }) {
           {lg.adds.length === 0
             ? <p className="text-[11.5px] text-stone-400">Nothing to add — your picks are on the roster, or you have not made any.</p>
             : <ul>{lg.adds.map((a) => (
-                <Move key={a.player_id} row={a} league={lg.league_id}
-                      note={a.replaces ? <span className="text-[11px] text-stone-400">over {a.replaces.name}</span>
-                                       : <span className="text-[11px] text-stone-400">{lg.spots.empty_starts.includes(a.slot) ? `${a.slot} slot is empty` : `no ${a.slot} rostered`}</span>} />
+                <Move key={a.player_id} row={a} league={lg.league_id} note={
+                  <span className="flex items-center gap-1.5 text-[11px] text-stone-400">
+                    {faab != null && a.standing.status === 'waivers' &&
+                      <BidInput bid={a.bid} min={lg.waiver.bid_min} onSave={(bid) => saveAddBid.mutate({ player_id: a.player_id, slot: a.slot, bid })} />}
+                    {a.replaces ? <span>over {a.replaces.name}</span>
+                                : <span>{lg.spots.empty_starts.includes(a.slot) ? `${a.slot} slot is empty` : `no ${a.slot} rostered`}</span>}
+                  </span>
+                } />
               ))}</ul>}
         </Panel>
 
@@ -103,7 +135,9 @@ function LeagueCard({ lg, week }: { lg: PlanLeague; week: number }) {
             : <ul>{lg.claims.map((c) => (
                 <Move key={c.player_id} row={c} league={lg.league_id} note={
                   <span className="flex items-center gap-1.5 text-[11px] text-stone-400">
-                    {c.bid != null && <span className="font-semibold text-emerald-800">${c.bid}</span>}
+                    {faab != null
+                      ? <BidInput bid={c.bid} min={lg.waiver.bid_min} onSave={(bid) => saveClaimBid.mutate({ player_id: c.player_id, bid })} />
+                      : c.bid != null && <span className="font-semibold text-emerald-800">${c.bid}</span>}
                     {c.drop ? <span>drop {c.drop.name}</span> : lg.spots.open > 0 ? <span>into an open spot</span> : <span className="text-amber-700">needs a drop</span>}
                   </span>
                 } />

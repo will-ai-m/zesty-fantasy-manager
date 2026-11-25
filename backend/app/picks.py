@@ -13,13 +13,14 @@ from pydantic import BaseModel, Field
 
 
 class PickIn(BaseModel):
-    """The K or D/ST you want in one league for one week. Intent only: a pick carries no add, drop
-    or bid, because whether it still needs a move is read off the rosters each time it is shown
-    rather than recorded here."""
+    """The K or D/ST you want in one league for one week. Whether it still needs a move is read off
+    the rosters each time it is shown rather than recorded here; `bid` is the FAAB you mean to
+    spend if he turns out to be on waivers, optional like a claim's."""
     league_id: str
     position: Literal["K", "DEF"]
     week: int = Field(ge=1, le=18)
     player_id: str
+    bid: int | None = Field(default=None, ge=0)
 
 
 class Pick(PickIn):
@@ -74,9 +75,15 @@ class PickStore(JsonStore):
             return [Pick(**p) for p in self._read() if p["season"] == season]
 
     async def set(self, season: str, data: PickIn) -> None:
+        """Re-picking the same unit keeps its bid unless a new one is sent; picking a different
+        unit starts without one, since a bid was meant for the man it was set on."""
         async with self.lock:
+            rows = self._read()
             pick = Pick(season=season, updated_at=time.time(), **data.model_dump()).model_dump()
-            self._write([p for p in self._read() if self._key(p) != self._key(pick)] + [pick])
+            old = next((p for p in rows if self._key(p) == self._key(pick)), None)
+            if old and old["player_id"] == pick["player_id"] and "bid" not in data.model_fields_set:
+                pick["bid"] = old.get("bid")
+            self._write([p for p in rows if self._key(p) != self._key(pick)] + [pick])
 
     async def clear(self, season: str, league_id: str, position: str, week: int) -> None:
         async with self.lock:

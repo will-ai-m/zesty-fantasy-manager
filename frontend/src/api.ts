@@ -292,6 +292,7 @@ export interface StreamPick {
   position: 'K' | 'DEF'
   week: number
   player_id: string
+  bid?: number | null
   season: string
   updated_at: number
 }
@@ -370,6 +371,7 @@ export interface PlanAdd extends Player {
   standing: WaiverStanding
   slot: 'K' | 'DEF'
   replaces: RosterPlayer | null
+  bid: number | null
 }
 
 export interface PlanClaim extends Player {
@@ -582,7 +584,7 @@ export const api = {
   clearWaiverPlan: (key: PlanKey) => http<WaiverPlan[]>(`/api/waiver-plans${q(key)}`, { method: 'DELETE' }),
   streaming: (week?: number) => http<StreamingResponse>(`/api/streaming${q({ week })}`),
   streamPicks: () => http<StreamPick[]>('/api/stream-picks'),
-  setStreamPick: (body: PickKey & { player_id: string }) => http<StreamPick[]>('/api/stream-picks', { method: 'PUT', body: JSON.stringify(body) }),
+  setStreamPick: (body: PickKey & { player_id: string; bid?: number | null }) => http<StreamPick[]>('/api/stream-picks', { method: 'PUT', body: JSON.stringify(body) }),
   clearStreamPick: (key: PickKey) => http<StreamPick[]>(`/api/stream-picks${q(key)}`, { method: 'DELETE' }),
   rosters: (leagueId: string, week?: number) => http<RostersResponse>(`/api/leagues/${leagueId}/rosters${q({ week })}`),
   transactions: (leagueId: string, weeks = 3) => http<TransactionsResponse>(`/api/leagues/${leagueId}/transactions${q({ weeks })}`),
